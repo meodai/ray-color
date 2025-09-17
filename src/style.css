@@ -29,16 +29,27 @@ h1, h2, h3, h4, h5, h6 {
   display: block;
   margin: 20vh auto;
   width: fit-content;
+  &::after {
+    content: "";
+    display: block;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 1.5rem;
+    background: linear-gradient(90deg,var(--stops));
+  }
 }
 
 canvas {
   border: .5px solid #fff;
+  display: block;
 }
 
 .marker {
   position: absolute;
   pointer-events: none;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(calc(.1 + var(--scale, 1)));
   border-radius: 50%;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
 }

@@ -92,6 +92,31 @@ function hexToRgb(hex: string, out: Float32Array) {
   return out;
 }
 
+function updateGradientStops() {
+  const stops: string[] = [];
+  // Provide a safe default when there are no samples (transparent bar)
+  if (!samples || samples.length === 0) {
+    document.documentElement.style.setProperty('--stops', 'transparent 0% 100%');
+    return;
+  }
+
+  // Evenly distribute stops across 0-100%
+  const seg = 100 / samples.length;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    const r = Math.floor(sample.color[0] * 255);
+    const g = Math.floor(sample.color[1] * 255);
+    const b = Math.floor(sample.color[2] * 255);
+    const color = `rgb(${r}, ${g}, ${b})`;
+    const startPercent = (i * seg);
+    const endPercent = (i === samples.length - 1) ? 100 : ((i + 1) * seg);
+    stops.push(`${color} ${startPercent}% ${endPercent}%`);
+  }
+
+  const gradientStops = stops.join(', ');
+  document.documentElement.style.setProperty('--stops', gradientStops);
+}
+
 
 // Optimization 5: Early ray termination with bounding checks
 function intersectSphere(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number, radius: number) {
@@ -398,28 +423,21 @@ function updateLightMarkers() {
     const lz = lightPositions[i * 3 + 2];
     const screenPos = worldToScreen(lx, ly, lz);
     if (screenPos.z <= 0) continue;
+    
+    // Calculate normalized scale based on Z distance (0 = far, 1 = near)
+    // Using a reasonable range: 0.5 to 8 units from camera
+    const minZ = 0.5;
+    const maxZ = 8;
+    const normalizedScale = Math.max(0, Math.min(1, (maxZ - screenPos.z) / (maxZ - minZ)));
+    
     const colorInput = document.getElementById(`light${i + 1}Color`) as HTMLInputElement;
-    if (type === 'directional') {
-      // Draw small arrow: base at projected point, direction opposite to light direction
-      const dir = directionalDirs[i];
-      const arrow = document.createElement('div');
-      arrow.className = 'marker light-marker';
-      arrow.style.left = `${screenPos.x}px`;
-      arrow.style.top = `${screenPos.y}px`;
-      arrow.style.backgroundColor = colorInput ? colorInput.value : '#fff';
-      arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(-dir[1], -dir[0])}rad)`;
-      arrow.style.width = '10px';
-      arrow.style.height = '10px';
-      arrow.style.clipPath = 'polygon(0 50%, 70% 0, 70% 30%, 100% 30%, 100% 70%, 70% 70%, 70% 100%)';
-      markersContainer.appendChild(arrow);
-    } else {
-      const marker = document.createElement('div');
-      marker.className = 'marker light-marker';
-      marker.style.left = `${screenPos.x}px`;
-      marker.style.top = `${screenPos.y}px`;
-      marker.style.backgroundColor = colorInput ? colorInput.value : '#fff';
-      markersContainer.appendChild(marker);
-    }
+    const marker = document.createElement('div');
+    marker.className = `marker light-marker${type === 'directional' ? ' light-marker--directional' : ''}`;
+    marker.style.left = `${screenPos.x}px`;
+    marker.style.top = `${screenPos.y}px`;
+    marker.style.backgroundColor = colorInput ? colorInput.value : '#fff';
+    marker.style.setProperty('--scale', normalizedScale.toString());
+    markersContainer.appendChild(marker);
   }
 }
 
@@ -442,6 +460,7 @@ function updateSamplesList() {
       samples = samples.filter(s => s !== sample);
       sample.marker.remove();
       updateSamplesList();
+      updateGradientStops();
     };
     item.appendChild(colorBox);
     item.appendChild(text);
@@ -557,6 +576,7 @@ function handleCanvasClick(event: MouseEvent) {
       marker: marker
     });
     updateSamplesList();
+    updateGradientStops();
   }
 }
 
@@ -685,6 +705,7 @@ function updateScene() {
     }
   });
   updateSamplesList();
+  updateGradientStops();
   requestRender();
 }
 
@@ -714,3 +735,5 @@ for (let i = 1; i <= 3; i++) {
 // Initial render
 updateScene(); // Initialize UI state
 requestRender();
+// Ensure gradient is initialized on first load
+updateGradientStops();
