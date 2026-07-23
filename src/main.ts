@@ -24,7 +24,13 @@ let sphereColor = new Float32Array([1.0, 1.0, 1.0]);
 let wallColor = new Float32Array([.75, .75, .75]);
 let indirectIntensity = 0.3;
 let lightSize = 0.15;
-let samples: any[] = [];
+const MAX_LIGHT_DISTANCE = 12;
+interface ColorSample {
+  dir: Float32Array; // unit direction from sphere center — anchors the sample to the surface
+  color: Float32Array;
+  marker: HTMLElement;
+}
+let samples: ColorSample[] = [];
 let areaSampleQuality = 6; // user adjustable
 // All lights now use spherical controls (yaw/pitch + distance). Directional lights ignore distance for shading
 
@@ -51,7 +57,7 @@ lightIntensities[0] = lightIntensities[1] = lightIntensities[2] = 0.6;
 // Optimization 3: Cache calculations
 let cachedFovRad: number, cachedTanFov: number, cachedAspectRatio: number, cachedAspectTanFov: number;
 let rayDirectionCache: Float32Array | null = null;
-let cacheWidth = 0, cacheHeight = 0;
+let cacheWidth = 0, cacheHeight = 0, cachedRayFOV = -1;
 
 function updateCache() {
   cachedFovRad = (cameraFOV * Math.PI) / 180;
@@ -59,15 +65,16 @@ function updateCache() {
   cachedAspectRatio = canvas.width / canvas.height;
   cachedAspectTanFov = cachedAspectRatio * cachedTanFov;
 
-  // Rebuild ray direction cache when dimensions OR FOV changes
-  // This ensures cache is always in sync with current settings
-  if (cacheWidth !== canvas.width || cacheHeight !== canvas.height || !rayDirectionCache) {
-    cacheWidth = canvas.width;
-    cacheHeight = canvas.height;
-    rayDirectionCache = new Float32Array(cacheWidth * cacheHeight * 3);
+  // Rebuild ray directions only when dimensions or FOV actually changed
+  if (cacheWidth === canvas.width && cacheHeight === canvas.height &&
+      cachedRayFOV === cameraFOV && rayDirectionCache) {
+    return;
   }
+  cacheWidth = canvas.width;
+  cacheHeight = canvas.height;
+  cachedRayFOV = cameraFOV;
+  rayDirectionCache = new Float32Array(cacheWidth * cacheHeight * 3);
 
-  // Always rebuild the ray cache when FOV changes
   for (let y = 0; y < cacheHeight; y++) {
     for (let x = 0; x < cacheWidth; x++) {
       const idx = (y * cacheWidth + x) * 3;
@@ -246,10 +253,11 @@ function calculateLighting(
     const bias = sphereRadius * 0.001 + 1e-4; // scaled bias to reduce acne
 
     if (lightType === 'directional') {
-      // Use cached normalized direction (points outward), incoming is opposite
-      let Lx = -directionalDirs[i][0];
-      let Ly = -directionalDirs[i][1];
-      let Lz = -directionalDirs[i][2];
+      // Cached direction points from the origin toward the light marker,
+      // which is exactly the direction from a surface toward the light
+      let Lx = directionalDirs[i][0];
+      let Ly = directionalDirs[i][1];
+      let Lz = directionalDirs[i][2];
       const shadowHit = intersectSphere(
         hitX + normalX * bias,
         hitY + normalY * bias,
@@ -271,12 +279,9 @@ function calculateLighting(
       const dist = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
       if (dist > 0) {
         Lx /= dist; Ly /= dist; Lz /= dist;
-        // Spot axis: from light toward origin (0,0,0) consistent with earlier logic
-        let Ax = -lightX, Ay = -lightY, Az = -lightZ;
-        const alen = Math.sqrt(Ax * Ax + Ay * Ay + Az * Az) || 1;
-        Ax /= alen; Ay /= alen; Az /= alen;
-        // Angle between -L (from hit to light) and axis OR simply L·(-axis)? Use reverse: ( -L )·A = -(L·A)
-        // We want the light to cover region where L is roughly -axis (hit in front of light)
+        // Cached spot axis points from the light toward the origin.
+        // A hit is inside the cone when -L (light-to-hit) aligns with the axis.
+        const Ax = spotAxes[i][0], Ay = spotAxes[i][1], Az = spotAxes[i][2];
         const LdotAxis = -(Lx * Ax + Ly * Ay + Lz * Az);
         const angleRad = (lightAngles[i] * Math.PI) / 180;
         const cosAngle = Math.cos(angleRad);
@@ -349,14 +354,16 @@ function calculateLighting(
   }
 
   if (enableIndirect && indirectIntensity > 0) {
-    const numSamples = 4;
     let indirectR = 0, indirectG = 0, indirectB = 0;
     const sampleDirs = [
       { x: 1, y: 0, z: 0 },
       { x: -1, y: 0, z: 0 },
       { x: 0, y: 1, z: 0 },
       { x: 0, y: -1, z: 0 },
+      { x: 0, y: 0, z: 1 },
+      { x: 0, y: 0, z: -1 },
     ];
+    const numSamples = sampleDirs.length;
     for (let s = 0; s < numSamples; s++) {
       const dir = sampleDirs[s];
       const dot = normalX * dir.x + normalY * dir.y + normalZ * dir.z;
@@ -369,7 +376,7 @@ function calculateLighting(
       );
       if (wallHit) {
         let wallLightR = 0, wallLightG = 0, wallLightB = 0;
-        for (let i = 0; i < 1; i++) {
+        for (let i = 0; i < 3; i++) {
           const lightX = lightPositions[i * 3];
           const lightY = lightPositions[i * 3 + 1];
           const lightZ = lightPositions[i * 3 + 2];
@@ -394,9 +401,10 @@ function calculateLighting(
         indirectB += wallColor[2] * wallLightB * attenuation;
       }
     }
-    colorR += indirectR * indirectIntensity * 0.25;
-    colorG += indirectG * indirectIntensity * 0.25;
-    colorB += indirectB * indirectIntensity * 0.25;
+    const indirectScale = indirectIntensity / numSamples;
+    colorR += indirectR * indirectScale;
+    colorG += indirectG * indirectScale;
+    colorB += indirectB * indirectScale;
   }
   return {
     r: colorR * objColorR,
@@ -412,6 +420,8 @@ function worldToScreen(pointX: number, pointY: number, pointZ: number) {
   return { x, y, z: relativeZ };
 }
 
+let selectedLight = -1;
+
 function updateLightMarkers() {
   const markersContainer = document.getElementById('light-markers');
   if (!markersContainer) return;
@@ -423,28 +433,120 @@ function updateLightMarkers() {
     const lz = lightPositions[i * 3 + 2];
     const screenPos = worldToScreen(lx, ly, lz);
     if (screenPos.z <= 0) continue;
-    
+    // Keep offscreen lights grabbable by clamping them to the canvas edge
+    const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
+    const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+
     // Calculate normalized scale based on Z distance (0 = far, 1 = near)
     // Using a reasonable range: 0.5 to 8 units from camera
     const minZ = 0.5;
     const maxZ = 8;
     const normalizedScale = Math.max(0, Math.min(1, (maxZ - screenPos.z) / (maxZ - minZ)));
-    
+
     const colorInput = document.getElementById(`light${i + 1}Color`) as HTMLInputElement;
     const marker = document.createElement('div');
     marker.className = `marker light-marker${type === 'directional' ? ' light-marker--directional' : ''}`;
-    marker.style.left = `${screenPos.x}px`;
-    marker.style.top = `${screenPos.y}px`;
-    marker.style.backgroundColor = colorInput ? colorInput.value : '#fff';
+    marker.dataset.light = String(i);
+    if (cx !== screenPos.x || cy !== screenPos.y) marker.classList.add('marker--offscreen');
+    if (i === selectedLight) marker.classList.add('marker--selected');
+    // Percent positioning keeps markers aligned even if the canvas is CSS-scaled
+    marker.style.left = `${(cx / canvas.width) * 100}%`;
+    marker.style.top = `${(cy / canvas.height) * 100}%`;
+    // Hollow ring = the light is behind the sphere
+    const vz = lz - cameraZ;
+    const camDist = Math.sqrt(lx * lx + ly * ly + vz * vz) || 1;
+    const occHit = intersectSphere(0, 0, cameraZ, lx / camDist, ly / camDist, vz / camDist, sphereRadius);
+    if (occHit && occHit.t < camDist - 1e-3) {
+      marker.classList.add('light-marker--occluded');
+      marker.style.borderColor = colorInput ? colorInput.value : '#fff';
+    } else {
+      marker.style.backgroundColor = colorInput ? colorInput.value : '#fff';
+    }
     marker.style.setProperty('--scale', normalizedScale.toString());
     markersContainer.appendChild(marker);
   }
+  updateLightGizmo();
+}
+
+// Selection overlay: aim line, area extent, and an info label for the selected light
+function updateLightGizmo() {
+  const svg = document.getElementById('light-gizmo');
+  const label = document.getElementById('light-gizmo-label');
+  if (!svg || !label) return;
+  svg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
+  svg.innerHTML = '';
+  for (let p = 1; p <= 3; p++) {
+    const panel = document.getElementById(`light${p}Panel`);
+    if (panel) panel.classList.toggle('panel--selected', p - 1 === selectedLight);
+  }
+  if (selectedLight < 0) {
+    label.hidden = true;
+    return;
+  }
+  const i = selectedLight;
+  const screenPos = worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
+  if (screenPos.z <= 0) {
+    label.hidden = true;
+    return;
+  }
+  const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
+  const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+  const type = lightTypes[i];
+  const NS = 'http://www.w3.org/2000/svg';
+
+  // Directional and spot lights aim at the origin — draw the aim line
+  if (type === 'directional' || type === 'spot') {
+    for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', cx.toFixed(1));
+      line.setAttribute('y1', cy.toFixed(1));
+      line.setAttribute('x2', (canvas.width / 2).toString());
+      line.setAttribute('y2', (canvas.height / 2).toString());
+      line.setAttribute('stroke-width', width);
+      line.setAttribute('class', cls);
+      svg.appendChild(line);
+    }
+  }
+
+  // Area lights show their emitter size
+  if (type === 'area' && lightSize > 0) {
+    const r = (lightSize / (screenPos.z * cachedTanFov)) * (canvas.height / 2);
+    const circle = document.createElementNS(NS, 'circle');
+    circle.setAttribute('cx', cx.toFixed(1));
+    circle.setAttribute('cy', cy.toFixed(1));
+    circle.setAttribute('r', Math.max(2, r).toFixed(1));
+    circle.setAttribute('class', 'gizmo-area');
+    svg.appendChild(circle);
+  }
+
+  const yawEl = document.getElementById(`light${i + 1}Yaw`) as HTMLInputElement | null;
+  const pitchEl = document.getElementById(`light${i + 1}Pitch`) as HTMLInputElement | null;
+  const distEl = document.getElementById(`light${i + 1}Dist`) as HTMLInputElement | null;
+  const angleEl = document.getElementById(`light${i + 1}Angle`) as HTMLInputElement | null;
+  let details = `yaw ${yawEl?.value ?? '?'}° · pitch ${pitchEl?.value ?? '?'}°`;
+  if (type !== 'directional') details += ` · dist ${distEl?.value ?? '?'}`;
+  if (type === 'spot') details += ` · cone ${angleEl?.value ?? '?'}°`;
+  label.innerHTML = `<strong>Light ${i + 1} · ${type}</strong><br>${details}`;
+  label.hidden = false;
+  label.style.left = `${(cx / canvas.width) * 100}%`;
+  label.style.top = `${(cy / canvas.height) * 100}%`;
+  // Flip the label to the other side near the right edge
+  label.style.transform = cx > canvas.width * 0.62
+    ? 'translate(calc(-100% - .75rem), -50%)'
+    : 'translate(.75rem, -50%)';
 }
 
 function updateSamplesList() {
   const list = document.getElementById('samples-list');
   if (!list) return;
   list.innerHTML = '';
+  if (samples.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'samples-empty';
+    empty.textContent = 'Click the sphere to sample a color.';
+    list.appendChild(empty);
+    return;
+  }
   samples.forEach(sample => {
     const item = document.createElement('div');
     item.className = 'sample-item';
@@ -539,10 +641,21 @@ function renderPass(scale: number) {
   if (fpsDisplay) (fpsDisplay as HTMLElement).textContent = `Frame: ${frameTime.toFixed(1)}ms`;
 }
 
-function handleCanvasClick(event: MouseEvent) {
+// Map a pointer event to canvas pixel coordinates (canvas may be CSS-scaled).
+// clamp keeps the point on the canvas — needed for pixel lookups, not for aiming.
+function eventToCanvasPixels(clientX: number, clientY: number, clamp = true) {
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  let x = (clientX - rect.left) * (canvas.width / rect.width);
+  let y = (clientY - rect.top) * (canvas.height / rect.height);
+  if (clamp) {
+    x = Math.min(canvas.width - 1, Math.max(0, x));
+    y = Math.min(canvas.height - 1, Math.max(0, y));
+  }
+  return { x, y };
+}
+
+// Cast the ray for a canvas pixel against the sphere; returns the hit or null
+function castRayAt(x: number, y: number) {
   let dirX, dirY, dirZ;
   if (rayDirectionCache) {
     const idx = (Math.floor(y) * canvas.width + Math.floor(x)) * 3;
@@ -557,27 +670,135 @@ function handleCanvasClick(event: MouseEvent) {
     dirY = py / len;
     dirZ = 1 / len;
   }
-  const sphereHit = intersectSphere(0, 0, cameraZ, dirX, dirY, dirZ, sphereRadius);
-  if (sphereHit) {
-    const color = calculateLighting(
-      sphereHit.x, sphereHit.y, sphereHit.z,
-      sphereHit.nx, sphereHit.ny, sphereHit.nz,
-      sphereColor[0], sphereColor[1], sphereColor[2]
-    );
-    const marker = document.createElement('div');
-    marker.className = 'marker sample-marker';
-    marker.style.left = `${x}px`;
-    marker.style.top = `${y}px`;
+  return intersectSphere(0, 0, cameraZ, dirX, dirY, dirZ, sphereRadius);
+}
+
+// Lit color of the surface point the unit direction points at
+function sampleColorAt(dir: Float32Array) {
+  return calculateLighting(
+    dir[0] * sphereRadius, dir[1] * sphereRadius, dir[2] * sphereRadius,
+    dir[0], dir[1], dir[2],
+    sphereColor[0], sphereColor[1], sphereColor[2]
+  );
+}
+
+// Reproject a sample's surface point to the screen; dim it when it faces away
+function updateSampleMarker(sample: ColorSample) {
+  const wx = sample.dir[0] * sphereRadius;
+  const wy = sample.dir[1] * sphereRadius;
+  const wz = sample.dir[2] * sphereRadius;
+  const screenPos = worldToScreen(wx, wy, wz);
+  sample.marker.style.left = `${(screenPos.x / canvas.width) * 100}%`;
+  sample.marker.style.top = `${(screenPos.y / canvas.height) * 100}%`;
+  // Point is visible when its normal faces the camera: dot(normal, P - camera) < 0
+  const facing = sphereRadius - sample.dir[2] * cameraZ;
+  sample.marker.classList.toggle('marker--behind', facing >= 0);
+}
+
+function moveSampleTo(sample: ColorSample, x: number, y: number) {
+  const hit = castRayAt(x, y);
+  if (hit) { // only follow the pointer while it stays on the sphere
+    sample.dir[0] = hit.nx;
+    sample.dir[1] = hit.ny;
+    sample.dir[2] = hit.nz;
+    const color = sampleColorAt(sample.dir);
+    sample.color[0] = color.r;
+    sample.color[1] = color.g;
+    sample.color[2] = color.b;
+  }
+  updateSampleMarker(sample);
+  updateSamplesList();
+  updateGradientStops();
+}
+
+function beginSampleDrag(event: PointerEvent, sample: ColorSample) {
+  event.preventDefault();
+  event.stopPropagation();
+  const move = (e: PointerEvent) => {
+    const p = eventToCanvasPixels(e.clientX, e.clientY);
+    moveSampleTo(sample, p.x, p.y);
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+function handleCanvasClick(event: MouseEvent) {
+  const { x, y } = eventToCanvasPixels(event.clientX, event.clientY);
+  const hit = castRayAt(x, y);
+  if (!hit) return;
+  const dir = new Float32Array([hit.nx, hit.ny, hit.nz]);
+  const color = sampleColorAt(dir);
+  const marker = document.createElement('div');
+  marker.className = 'marker sample-marker';
+  const sample: ColorSample = {
+    dir,
+    color: new Float32Array([color.r, color.g, color.b]),
+    marker: marker
+  };
+  marker.addEventListener('pointerdown', e => beginSampleDrag(e, sample));
   const sm = document.getElementById('sample-markers');
   if (sm) sm.appendChild(marker);
-    samples.push({
-      position: { x, y },
-      color: new Float32Array([color.r, color.g, color.b]),
-      marker: marker
-    });
-    updateSamplesList();
-    updateGradientStops();
+  updateSampleMarker(sample);
+  samples.push(sample);
+  updateSamplesList();
+  updateGradientStops();
+}
+
+// Place a light on its orbit (radius = distance) under the pointer:
+// intersect the pixel ray with the orbit sphere. When the pointer is outside
+// the orbit's silhouette, GROW the orbit to reach it — dragging outward pulls
+// the light further away instead of pinning it to the old radius.
+function pointerToLightAngles(x: number, y: number, dist: number) {
+  const px = (2 * ((x + 0.5) / canvas.width) - 1) * cachedAspectTanFov;
+  const py = -(2 * ((y + 0.5) / canvas.height) - 1) * cachedTanFov;
+  const len = Math.sqrt(px * px + py * py + 1);
+  const dx = px / len, dy = py / len, dz = 1 / len;
+  const b = 2 * cameraZ * dz;
+  const disc = b * b - 4 * (cameraZ * cameraZ - dist * dist);
+  let X, Y, Z;
+  let newDist = dist;
+  if (disc >= 0) {
+    const sqrtD = Math.sqrt(disc);
+    let t = (-b - sqrtD) / 2;
+    if (t < 0) t = (-b + sqrtD) / 2; // camera inside the orbit sphere
+    X = dx * t;
+    Y = dy * t;
+    Z = cameraZ + dz * t;
+  } else {
+    // Pointer ray misses the orbit sphere: place the light at the ray's
+    // closest point to the origin, extending the distance to match
+    const t = -cameraZ * dz;
+    X = dx * t;
+    Y = dy * t;
+    Z = cameraZ + dz * t;
+    newDist = Math.sqrt(X * X + Y * Y + Z * Z) || dist;
   }
+  const pitch = Math.asin(Math.max(-1, Math.min(1, Y / newDist))) * 180 / Math.PI;
+  const yaw = Math.atan2(Z, X) * 180 / Math.PI;
+  return { yaw, pitch, dist: newDist };
+}
+
+let draggedLight = -1;
+
+function dragLightTo(clientX: number, clientY: number) {
+  if (draggedLight < 0) return;
+  // No clamping: lights may be aimed well past the canvas edge
+  const { x, y } = eventToCanvasPixels(clientX, clientY, false);
+  const distEl = document.getElementById(`light${draggedLight + 1}Dist`) as HTMLInputElement | null;
+  const dist = distEl ? parseFloat(distEl.value) || 2 : 2;
+  const { yaw, pitch, dist: newDist } = pointerToLightAngles(x, y, dist);
+  const yawEl = document.getElementById(`light${draggedLight + 1}Yaw`) as HTMLInputElement | null;
+  const pitchEl = document.getElementById(`light${draggedLight + 1}Pitch`) as HTMLInputElement | null;
+  if (yawEl) yawEl.value = Math.round(yaw).toString();
+  if (pitchEl) pitchEl.value = Math.round(Math.max(-89, Math.min(89, pitch))).toString();
+  if (distEl && newDist !== dist) {
+    distEl.value = Math.min(MAX_LIGHT_DISTANCE, Math.max(sphereRadius, newDist)).toFixed(2);
+  }
+  updateScene();
 }
 
 async function startRender() {
@@ -610,10 +831,11 @@ function updateScene() {
   cameraZ = parseFloat((document.getElementById('cameraZ') as HTMLInputElement).value);
   cameraFOV = parseFloat((document.getElementById('cameraFOV') as HTMLInputElement).value);
   sphereRadius = parseFloat((document.getElementById('sphereRadius') as HTMLInputElement).value);
-  // Dynamic distance slider bounds: min = sphere radius, max = sphere radius * 6 (slightly bigger as requested)
+  // Distance bounds: a light can't sit inside the sphere, and 12 units is far
+  // enough that inverse-square attenuation has faded it to almost nothing
   const distInputs = document.querySelectorAll('input[data-dynamic-dist]') as NodeListOf<HTMLInputElement>;
   const minDist = sphereRadius;
-  const maxDist = sphereRadius * 6;
+  const maxDist = MAX_LIGHT_DISTANCE;
   distInputs.forEach(inp => {
     inp.min = minDist.toFixed(3);
     inp.max = maxDist.toFixed(3);
@@ -665,75 +887,94 @@ function updateScene() {
       spotAxes[i][1] = ay / alen;
       spotAxes[i][2] = az / alen;
     }
-    const angleControl = document.getElementById(`light${i + 1}Angle`) as HTMLElement;
-    const angleLabel = angleControl.previousElementSibling as HTMLElement;
-    if (lightTypes[i] === 'spot') {
-      angleControl.style.display = 'inline-block';
-      angleLabel.style.display = 'inline-block';
-    } else {
-      angleControl.style.display = 'none';
-      angleLabel.style.display = 'none';
-    }
+    // Cone angle only applies to spot lights; distance has no effect on directional shading
+    const angleWrap = document.getElementById(`light${i + 1}AngleControl`);
+    if (angleWrap) angleWrap.hidden = lightTypes[i] !== 'spot';
+    const distWrap = distEl ? distEl.closest('.control') : null;
+    if (distWrap) distWrap.classList.toggle('control--inactive', lightTypes[i] === 'directional');
   }
+  // Refresh the camera/ray cache first, then re-light and reproject the
+  // surface-anchored samples — they stay on their spot when the camera moves
+  updateCache();
   samples.forEach(sample => {
-    let dirX, dirY, dirZ;
-    const x = sample.position.x;
-    const y = sample.position.y;
-    if (rayDirectionCache) {
-      const idx = (Math.floor(y) * canvas.width + Math.floor(x)) * 3;
-      dirX = rayDirectionCache[idx];
-      dirY = rayDirectionCache[idx + 1];
-      dirZ = rayDirectionCache[idx + 2];
-    } else {
-      const px = (2 * (x / canvas.width) - 1) * cachedAspectTanFov;
-      const py = -(2 * (y / canvas.height) - 1) * cachedTanFov;
-      const len = Math.sqrt(px * px + py * py + 1);
-      dirX = px / len;
-      dirY = py / len;
-      dirZ = 1 / len;
-    }
-    const sphereHit = intersectSphere(0, 0, cameraZ, dirX, dirY, dirZ, sphereRadius);
-    if (sphereHit) {
-      const color = calculateLighting(
-        sphereHit.x, sphereHit.y, sphereHit.z,
-        sphereHit.nx, sphereHit.ny, sphereHit.nz,
-        sphereColor[0], sphereColor[1], sphereColor[2]
-      );
-      sample.color[0] = color.r;
-      sample.color[1] = color.g;
-      sample.color[2] = color.b;
-    }
+    const color = sampleColorAt(sample.dir);
+    sample.color[0] = color.r;
+    sample.color[1] = color.g;
+    sample.color[2] = color.b;
+    updateSampleMarker(sample);
   });
   updateSamplesList();
   updateGradientStops();
+  syncControlOutputs();
+  updateLightMarkers(); // immediate marker/gizmo feedback, ahead of the async render
   requestRender();
 }
 
-// UI visibility helper removed (all lights use spherical controls)
+// Mirror each range input's current value into its <output> readout
+function syncControlOutputs() {
+  document.querySelectorAll<HTMLOutputElement>('output[data-for]').forEach(out => {
+    const input = document.getElementById(out.dataset.for || '') as HTMLInputElement | null;
+    if (input) out.textContent = input.value;
+  });
+}
 
-// Add event listeners
+// Add event listeners (updateScene reads every control, so one listener per element is enough)
 document.querySelectorAll('input').forEach(input => {
   input.addEventListener('input', updateScene);
 });
 document.querySelectorAll('select').forEach(select => {
   select.addEventListener('change', updateScene);
 });
-canvas.addEventListener('click', handleCanvasClick);
+canvas.addEventListener('click', event => {
+  // Clicking the scene deselects the light and samples a color
+  if (selectedLight >= 0) {
+    selectedLight = -1;
+    updateLightMarkers();
+  }
+  handleCanvasClick(event);
+});
 
-// Listeners for spherical controls
-for (let i = 1; i <= 3; i++) {
-  const yaw = document.getElementById(`light${i}Yaw`);
-  const pitch = document.getElementById(`light${i}Pitch`);
-  const dist = document.getElementById(`light${i}Dist`);
-  if (yaw) yaw.addEventListener('input', updateScene);
-  if (pitch) pitch.addEventListener('input', updateScene);
-  if (dist) dist.addEventListener('input', updateScene);
-  const typeSel = document.getElementById(`light${i}Type`);
-  if (typeSel) typeSel.addEventListener('change', updateScene);
+// Light markers: click selects (3D-app style), drag aims, wheel adjusts distance.
+// Delegated on the container because markers are rebuilt on every render.
+const lightMarkersEl = document.getElementById('light-markers');
+if (lightMarkersEl) {
+  lightMarkersEl.addEventListener('pointerdown', e => {
+    const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
+    if (!markerEl || markerEl.dataset.light === undefined) return;
+    e.preventDefault();
+    selectedLight = parseInt(markerEl.dataset.light, 10);
+    draggedLight = selectedLight;
+    updateLightMarkers();
+    const move = (ev: PointerEvent) => dragLightTo(ev.clientX, ev.clientY);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      draggedLight = -1;
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  lightMarkersEl.addEventListener('wheel', e => {
+    const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
+    if (!markerEl || markerEl.dataset.light === undefined) return;
+    e.preventDefault();
+    const i = parseInt(markerEl.dataset.light, 10);
+    const distEl = document.getElementById(`light${i + 1}Dist`) as HTMLInputElement | null;
+    if (!distEl) return;
+    distEl.value = (parseFloat(distEl.value) + (e.deltaY > 0 ? 0.1 : -0.1)).toFixed(2);
+    updateScene(); // updateScene clamps the value to the slider's dynamic bounds
+  }, { passive: false });
 }
 
-// Initial render
-updateScene(); // Initialize UI state
-requestRender();
-// Ensure gradient is initialized on first load
-updateGradientStops();
+// Scroll on the render to dolly the camera
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const el = document.getElementById('cameraZ') as HTMLInputElement | null;
+  if (!el) return;
+  const min = parseFloat(el.min), max = parseFloat(el.max);
+  el.value = Math.min(max, Math.max(min, parseFloat(el.value) - e.deltaY * 0.005)).toFixed(1);
+  updateScene();
+}, { passive: false });
+
+// Initial render (updateScene triggers the render and gradient initialization)
+updateScene();

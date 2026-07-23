@@ -39,6 +39,9 @@
 body {
   margin: 0;
   font-size: 1rem;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 :focus-visible {
@@ -46,60 +49,93 @@ body {
   outline-offset: 2px;
 }
 
-/* Header */
+/* Top bar */
 
-.app-header {
-  width: min(70rem, 92vw);
-  margin: 2.5rem auto 0;
+.bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  position: relative;
+  z-index: 20;
 }
 
-.app-header__title {
+.bar__title {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.4rem;
   font-weight: 200;
   letter-spacing: -0.05em;
 }
 
-.app-header__subtitle {
-  margin: 0;
-  font-size: .9rem;
-  max-width: 34rem;
+.bar__sub {
+  font-size: .8em;
+  color: color-mix(in lab, currentColor 60%, var(--bg));
 }
 
-/* Stage: the render, its markers, the sampled gradient */
+.bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.bar__link {
+  font-size: .8rem;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.bar__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.button {
+  font: inherit;
+  font-size: .8rem;
+  padding: .4rem .8rem;
+  border: 2px solid currentColor;
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s linear;
+}
+
+.button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 0 0 currentColor;
+}
+
+.button:active {
+  transform: translateY(0);
+  box-shadow: 0 0 0 0 currentColor;
+}
+
+/* Stage */
 
 .stage {
+  flex: 1;
   display: grid;
   place-items: center;
-  margin: 10vh auto 4rem;
-}
-
-.container {
+  align-content: center;
+  gap: 1rem;
   position: relative;
-  width: min(400px, 92vw);
+  padding: 1rem 1.5rem 2rem;
 }
 
-/* Sampled colors glow behind the render */
-.container::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, var(--stops));
-  filter: blur(80px);
-  transform: translateY(10%) translateZ(0);
-  will-change: transform;
+.viewport {
+  position: relative;
+  width: min(72vmin, 560px);
 }
 
-/* …and repeat as a crisp band below it */
-.container::after {
+/* The collected gradient peeks out 1rem behind the canvas on each side */
+.viewport::before {
   content: '';
-  display: block;
   position: absolute;
-  top: calc(100% + .75rem);
-  left: 0;
-  right: 0;
-  height: 1.25rem;
+  inset: -1rem;
   background: linear-gradient(90deg, var(--stops));
+  pointer-events: none;
 }
 
 canvas {
@@ -108,23 +144,35 @@ canvas {
   display: block;
   width: 100%;
   border: 2px solid currentColor;
+  image-rendering: auto;
 }
 
-#light-markers,
-#sample-markers {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-
-#light-gizmo {
+#gizmo {
   position: absolute;
   inset: 0;
   z-index: 2;
   width: 100%;
   height: 100%;
   pointer-events: none;
+  overflow: visible; /* keep rotation arcs usable for edge-clamped lights */
+}
+
+#light-layer,
+#sample-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.hints {
+  margin: 0;
+  position: relative;
+  font-size: .7rem;
+  color: color-mix(in lab, currentColor 65%, var(--bg));
+  background: var(--bg);
+  padding: .2rem .7rem;
+  text-align: center;
 }
 
 .gizmo-line-casing {
@@ -144,17 +192,48 @@ canvas {
   stroke-dasharray: 3 3;
 }
 
-#light-gizmo-label {
-  position: absolute;
-  z-index: 4;
-  padding: .3rem .5rem;
-  border: 1px solid currentColor;
-  background: var(--bg);
-  font-size: .65rem;
-  line-height: 1.4;
-  white-space: nowrap;
-  pointer-events: none;
+.gizmo-sphere {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-dasharray: 2 3;
 }
+
+.gizmo-arc-casing {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.gizmo-arc {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.gizmo-arrow {
+  fill: rgba(255, 255, 255, 0.9);
+  stroke: rgba(0, 0, 0, 0.4);
+  stroke-width: 0.75;
+}
+
+.gizmo-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
+
+.gizmo-hit--yaw {
+  cursor: ew-resize;
+}
+
+.gizmo-hit--pitch {
+  cursor: ns-resize;
+}
+
+/* Markers */
 
 .marker {
   position: absolute;
@@ -214,127 +293,72 @@ canvas {
   cursor: grabbing;
 }
 
-/* Sample point rotated to the far side of the sphere */
 .marker--behind {
   opacity: .25;
   pointer-events: none;
 }
 
-/* Samples panel */
+/* Popovers */
 
-.samples-panel {
-  position: fixed;
-  top: 1.25rem;
-  right: 1.25rem;
+.popover {
+  border: 2px solid currentColor;
+  background: var(--bg);
+  padding: .9rem 1.1rem 1.1rem;
+  width: 14rem;
+}
+
+.popover__title {
+  font-size: 1rem;
+  font-weight: 200;
+  letter-spacing: -0.03em;
+}
+
+/* Docked beside the viewport so it never covers the render */
+.popover--inspector {
+  position: absolute;
   z-index: 10;
-  width: 15rem;
-  max-height: 80vh;
-  overflow-y: auto;
-  border: 2px solid currentColor;
-  background: var(--bg);
-  padding: 1rem 1.25rem 1.25rem;
+  top: 0;
+  left: -1.25rem;
+  transform: translateX(-100%);
 }
 
-.samples-panel h3 {
-  margin: 0 0 .25rem;
-  font-size: 1.1rem;
-  font-weight: 200;
-  letter-spacing: -0.03em;
+@media (max-width: 72rem) {
+  .popover--inspector {
+    position: fixed;
+    left: 1.5rem;
+    top: 4rem;
+    transform: none;
+  }
 }
 
-.samples-empty {
-  margin: .25rem 0 0;
-  font-size: .75rem;
-  color: color-mix(in lab, currentColor 55%, var(--bg));
+.popover--scene {
+  position: fixed;
+  top: 4rem;
+  right: 1.5rem;
+  z-index: 30;
 }
 
-.sample-item {
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  padding: .45rem 0;
-  border-top: 1px solid var(--line);
-  font-size: .72rem;
-}
-
-.sample-color {
-  flex-shrink: 0;
-  width: 1.1rem;
-  height: 1.1rem;
-  border: 1px solid var(--line);
-}
-
-.remove-sample {
-  margin-left: auto;
-  border: 2px solid currentColor;
-  background: var(--bg);
-  color: inherit;
-  font: inherit;
-  font-size: .7rem;
-  line-height: 1;
-  padding: .15rem .35rem;
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s linear;
-}
-
-.remove-sample:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 2px 0 0 currentColor;
-}
-
-.remove-sample:active {
-  transform: translateY(0);
-  box-shadow: 0 0 0 0 currentColor;
-}
-
-/* Controls */
-
-.controls {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 1rem;
-  width: min(70rem, 92vw);
-  margin: 0 auto 4rem;
-}
-
-.panel {
-  border: 2px solid currentColor;
-  background: var(--bg);
-  padding: 1rem 1.25rem 1.25rem;
-}
-
-.panel h3 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 200;
-  letter-spacing: -0.03em;
-}
-
-.panel--selected {
-  box-shadow: 4px 4px 0 0 currentColor;
-}
-
-.control {
+.field {
   display: flex;
   flex-direction: column;
   gap: .2rem;
-  margin-top: .75rem;
+  margin-top: .6rem;
   transition: opacity 0.15s linear;
 }
 
-.control--inactive {
+.field--inactive {
   opacity: .35;
 }
 
-.control__row {
+.field__row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: .5rem;
-  font-size: .8rem;
+  font-size: .75rem;
 }
 
-.control__row output {
+.field__row output {
   flex-shrink: 0;
   font-weight: 700;
   font-size: .8em;
@@ -386,7 +410,7 @@ input[type="color"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 2rem;
+  height: 1.8rem;
   padding: 3px;
   border: 2px solid currentColor;
   background: var(--bg);
@@ -412,9 +436,9 @@ input[type="color"]::-moz-color-swatch {
 
 select {
   font: inherit;
-  font-size: .85rem;
+  font-size: .8rem;
   width: 100%;
-  padding: .3rem .4rem;
+  padding: .25rem .35rem;
   border: 2px solid currentColor;
   border-radius: 0;
   background: var(--bg);
@@ -422,31 +446,19 @@ select {
   cursor: pointer;
 }
 
-/* Stats */
-
-.stats {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1.25rem;
-  width: min(70rem, 92vw);
-  margin: -3rem auto 1.5rem;
-  font-size: .7rem;
-  color: color-mix(in lab, currentColor 60%, var(--bg));
-}
-
-/* Small screens */
-
-@media (orientation: portrait), (max-width: 40rem) {
-  .samples-panel {
-    position: static;
-    width: min(70rem, 92vw);
-    margin: 0 auto 1rem;
-    max-height: none;
+@media (max-width: 40rem) {
+  .bar {
+    padding: 1rem;
   }
 
-  .stage {
-    margin-top: 3rem;
-    margin-bottom: 3rem;
+  .popover--inspector {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    top: auto;
+    bottom: 5.5rem;
+    width: auto;
+    transform: none;
   }
 }
 

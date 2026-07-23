@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ray Color · Playground</title>
+  <meta name="description" content="Direct-manipulation playground for the Ray Color raycaster: sample colors from a lit sphere, aim lights by dragging, copy the gradient as CSS.">
+  <link rel="icon" type="image/svg+xml" href="/vite.svg">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Iosevka/6.0.0/iosevka/iosevka.min.css">
+  <link rel="stylesheet" href="/src/alt.css">
+</head>
+
+<body>
+  <header class="bar">
+    <h1 class="bar__title">Ray Color <span class="bar__sub">· playground</span></h1>
+    <nav class="bar__actions">
+      <button class="button" id="copyCss" hidden>Copy CSS</button>
+      <button class="button" id="sceneBtn" aria-expanded="false">Scene</button>
+      <a class="bar__link" href="/index.html">classic view</a>
+    </nav>
+  </header>
+
+  <main class="stage">
+    <div class="viewport" id="viewport">
+      <canvas id="canvas" width="400" height="400"></canvas>
+      <svg id="gizmo" aria-hidden="true"></svg>
+      <div id="light-layer"></div>
+      <div id="sample-layer"></div>
+
+      <div class="popover popover--inspector" id="inspector" hidden>
+        <div class="popover__title" id="inspTitle">Light 1</div>
+        <div class="field">
+          <span class="field__row"><label for="inspType">Type</label></span>
+          <select id="inspType">
+            <option value="point">Point light</option>
+            <option value="area">Area light</option>
+            <option value="directional">Directional</option>
+            <option value="spot">Spot light</option>
+          </select>
+        </div>
+        <div class="field field--color">
+          <span class="field__row"><label for="inspColor">Color</label></span>
+          <input type="color" id="inspColor">
+        </div>
+        <div class="field">
+          <span class="field__row"><label for="inspIntensity">Intensity</label><output id="inspIntensityOut"></output></span>
+          <input type="range" id="inspIntensity" min="0" max="1.25" step="0.05">
+        </div>
+        <div class="field" id="inspDistRow">
+          <span class="field__row"><label for="inspDist">Distance</label><output id="inspDistOut"></output></span>
+          <input type="range" id="inspDist" min="0.1" max="12" step="0.05">
+        </div>
+        <div class="field" id="inspAngleRow" hidden>
+          <span class="field__row"><label for="inspAngle">Cone angle&deg;</label><output id="inspAngleOut"></output></span>
+          <input type="range" id="inspAngle" min="10" max="60" step="5">
+        </div>
+      </div>
+    </div>
+    <p class="hints">click sphere = sample &nbsp;·&nbsp; drag points &amp; lights = move &nbsp;·&nbsp; arcs = yaw / pitch &nbsp;·&nbsp; backspace = delete point &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
+  </main>
+
+  <div class="popover popover--scene" id="scenePopover" hidden>
+    <div class="popover__title">Scene</div>
+    <div class="field field--color">
+      <span class="field__row"><label for="scnSphereColor">Sphere color</label></span>
+      <input type="color" id="scnSphereColor" value="#ffffff">
+    </div>
+    <div class="field field--color">
+      <span class="field__row"><label for="scnWallColor">Wall color</label></span>
+      <input type="color" id="scnWallColor" value="#999999">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnRadius">Sphere size</label><output id="scnRadiusOut"></output></span>
+      <input type="range" id="scnRadius" min="0.1" max="1.5" value="0.8" step="0.1">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnFov">FOV</label><output id="scnFovOut"></output></span>
+      <input type="range" id="scnFov" min="10" max="120" value="30" step="1">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnIndirect">Indirect light</label><output id="scnIndirectOut"></output></span>
+      <input type="range" id="scnIndirect" min="0" max="1" value="0.3" step="0.05">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnLightSize">Light size</label><output id="scnLightSizeOut"></output></span>
+      <input type="range" id="scnLightSize" min="0" max="0.5" value="0.15" step="0.05">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnQuality">Area samples</label><output id="scnQualityOut"></output></span>
+      <input type="range" id="scnQuality" min="1" max="48" value="6" step="1">
+    </div>
+  </div>
+
+  <script type="module" src="/src/alt.ts"></script>
+</body>
+
+</html>
