@@ -39,6 +39,11 @@ let areaSampleQuality = 6; // user adjustable
 // Cached normalized axes/directions
 const directionalDirs = new Array(3).fill(null).map(() => new Float32Array(3));
 const spotAxes = new Array(3).fill(null).map(() => new Float32Array(3));
+// Orthonormal basis perpendicular to each light's axis — area lights sample
+// on a disk FACING the target, not a fixed horizontal one
+const areaU = new Array(3).fill(null).map(() => new Float32Array(3));
+const areaV = new Array(3).fill(null).map(() => new Float32Array(3));
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 // Light arrays
 const lightPositions = new Float32Array(9); // 3 lights x 3 components
@@ -357,14 +362,14 @@ function calculateLighting(
         let sampleY = lightY;
         let sampleZ = lightZ;
         if (lightType === 'area' && lightSize > 0) {
-          // Uniform disk sample in local plane (simple XY perturbation)
-          const u = (s + 0.5) / shadowSamples; // stratified
-          const v = (s * 37 % shadowSamples + 0.5) / shadowSamples; // permuted index for decorrelation
-          const r = Math.sqrt(u) * lightSize; // sqrt for uniform
-          const theta = 2 * Math.PI * v;
-          sampleX += Math.cos(theta) * r;
-          sampleY += Math.sin(theta) * r;
-          // simple tilt into Z for some variation (optional)
+          // Deterministic golden-angle spiral on the disk facing the target
+          const r = Math.sqrt((s + 0.5) / shadowSamples) * lightSize;
+          const theta = s * GOLDEN_ANGLE;
+          const ox = Math.cos(theta) * r;
+          const oy = Math.sin(theta) * r;
+          sampleX += areaU[i][0] * ox + areaV[i][0] * oy;
+          sampleY += areaU[i][1] * ox + areaV[i][1] * oy;
+          sampleZ += areaU[i][2] * ox + areaV[i][2] * oy;
         }
         let Lx = sampleX - hitX;
         let Ly = sampleY - hitY;
@@ -420,16 +425,31 @@ function calculateLighting(
       if (wallHit) {
         let wallLightR = 0, wallLightG = 0, wallLightB = 0;
         for (let i = 0; i < 3; i++) {
-          let wallDiffuse;
+          let wallDiffuse = 0;
           if (lightTypes[i] === 'directional') {
-            // Directional lights are pure directions — distance must not leak in
+            // Directional lights are pure directions — no distance, no falloff
             wallDiffuse = Math.max(0, wallHit.nx * directionalDirs[i][0] + wallHit.ny * directionalDirs[i][1] + wallHit.nz * directionalDirs[i][2]);
           } else {
             const wlX = lightPositions[i * 3] - wallHit.x;
             const wlY = lightPositions[i * 3 + 1] - wallHit.y;
             const wlZ = lightPositions[i * 3 + 2] - wallHit.z;
-            const wlInvLen = 1 / Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
-            wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+            const wlLen = Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
+            if (wlLen > 0) {
+              const inv = 1 / wlLen;
+              // Same inverse-square attenuation as the direct pass
+              wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * inv) / Math.max(0.01, wlLen * wlLen);
+              if (lightTypes[i] === 'spot') {
+                // Respect the cone: bounce only where the spot actually shines
+                const LdotAxis = -((wlX * inv) * spotAxes[i][0] + (wlY * inv) * spotAxes[i][1] + (wlZ * inv) * spotAxes[i][2]);
+                const cosAngle = Math.cos((lightAngles[i] * Math.PI) / 180);
+                if (LdotAxis <= cosAngle) {
+                  wallDiffuse = 0;
+                } else {
+                  const edge = (LdotAxis - cosAngle) / (1 - cosAngle);
+                  wallDiffuse *= edge * edge * (3 - 2 * edge);
+                }
+              }
+            }
           }
           wallLightR += lightColors[i * 3] * wallDiffuse * lightIntensities[i];
           wallLightG += lightColors[i * 3 + 1] * wallDiffuse * lightIntensities[i];
@@ -1012,14 +1032,29 @@ function updateScene() {
       directionalDirs[i][0] = dx / len;
       directionalDirs[i][1] = dy / len;
       directionalDirs[i][2] = dz / len;
-    } else if (lightTypes[i] === 'spot') {
+    }
+    // Light axis (toward the origin) + perpendicular disk basis — used by
+    // spot cones and by area-light sampling for every light type
+    {
       let ax = -lightPositions[i * 3];
       let ay = -lightPositions[i * 3 + 1];
       let az = -lightPositions[i * 3 + 2];
       const alen = Math.sqrt(ax*ax + ay*ay + az*az) || 1;
-      spotAxes[i][0] = ax / alen;
-      spotAxes[i][1] = ay / alen;
-      spotAxes[i][2] = az / alen;
+      ax /= alen; ay /= alen; az /= alen;
+      spotAxes[i][0] = ax;
+      spotAxes[i][1] = ay;
+      spotAxes[i][2] = az;
+      const hy = Math.abs(ay) > 0.99 ? 0 : 1;
+      const hx = 1 - hy;
+      let ux = hy * az;
+      let uy = -hx * az;
+      let uz = hx * ay - hy * ax;
+      const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+      ux /= ulen; uy /= ulen; uz /= ulen;
+      areaU[i][0] = ux; areaU[i][1] = uy; areaU[i][2] = uz;
+      areaV[i][0] = ay * uz - az * uy;
+      areaV[i][1] = az * ux - ax * uz;
+      areaV[i][2] = ax * uy - ay * ux;
     }
     // Cone angle only applies to spot lights; distance has no effect on directional shading
     const angleWrap = document.getElementById(`light${i + 1}AngleControl`);

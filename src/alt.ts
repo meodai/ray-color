@@ -57,6 +57,11 @@ const lightIntensities = new Float32Array(3);
 const lightAngles = new Float32Array(3);
 const directionalDirs = new Array(3).fill(null).map(() => new Float32Array(3));
 const spotAxes = new Array(3).fill(null).map(() => new Float32Array(3));
+// Orthonormal basis perpendicular to each light's axis — area lights sample
+// on a disk FACING the target, not a fixed horizontal one
+const areaU = new Array(3).fill(null).map(() => new Float32Array(3));
+const areaV = new Array(3).fill(null).map(() => new Float32Array(3));
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 // sRGB <-> linear: inputs (color pickers) are decoded to linear light for the
 // shading math; results are encoded back to sRGB only when written to pixels.
@@ -102,9 +107,22 @@ function syncLights() {
     directionalDirs[i][1] = dy;
     directionalDirs[i][2] = dz;
     const alen = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-    spotAxes[i][0] = -dx / alen;
-    spotAxes[i][1] = -dy / alen;
-    spotAxes[i][2] = -dz / alen;
+    const ax = -dx / alen, ay = -dy / alen, az = -dz / alen;
+    spotAxes[i][0] = ax;
+    spotAxes[i][1] = ay;
+    spotAxes[i][2] = az;
+    // Disk basis: u = normalize(helper x axis), v = axis x u
+    const hy = Math.abs(ay) > 0.99 ? 0 : 1;
+    const hx = 1 - hy;
+    let ux = hy * az;
+    let uy = -hx * az;
+    let uz = hx * ay - hy * ax;
+    const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+    ux /= ulen; uy /= ulen; uz /= ulen;
+    areaU[i][0] = ux; areaU[i][1] = uy; areaU[i][2] = uz;
+    areaV[i][0] = ay * uz - az * uy;
+    areaV[i][1] = az * ux - ax * uz;
+    areaV[i][2] = ax * uy - ay * ux;
   }
 }
 
@@ -298,12 +316,14 @@ function calculateLighting(
       for (let s = 0; s < shadowSamples; s++) {
         let sampleX = lightX, sampleY = lightY, sampleZ = lightZ;
         if (lightType === 'area' && state.lightSize > 0) {
-          const u = (s + 0.5) / shadowSamples;
-          const v = (s * 37 % shadowSamples + 0.5) / shadowSamples;
-          const r = Math.sqrt(u) * state.lightSize;
-          const theta = 2 * Math.PI * v;
-          sampleX += Math.cos(theta) * r;
-          sampleY += Math.sin(theta) * r;
+          // Deterministic golden-angle spiral on the disk facing the target
+          const r = Math.sqrt((s + 0.5) / shadowSamples) * state.lightSize;
+          const theta = s * GOLDEN_ANGLE;
+          const ox = Math.cos(theta) * r;
+          const oy = Math.sin(theta) * r;
+          sampleX += areaU[i][0] * ox + areaV[i][0] * oy;
+          sampleY += areaU[i][1] * ox + areaV[i][1] * oy;
+          sampleZ += areaU[i][2] * ox + areaV[i][2] * oy;
         }
         let Lx = sampleX - hitX, Ly = sampleY - hitY, Lz = sampleZ - hitZ;
         const dist = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
@@ -337,16 +357,32 @@ function calculateLighting(
       if (wallHit) {
         let wallLightR = 0, wallLightG = 0, wallLightB = 0;
         for (let i = 0; i < 3; i++) {
-          let wallDiffuse;
-          if (lights[i].type === 'directional') {
-            // Directional lights are pure directions — distance must not leak in
+          const type = lights[i].type;
+          let wallDiffuse = 0;
+          if (type === 'directional') {
+            // Directional lights are pure directions — no distance, no falloff
             wallDiffuse = Math.max(0, wallHit.nx * directionalDirs[i][0] + wallHit.ny * directionalDirs[i][1] + wallHit.nz * directionalDirs[i][2]);
           } else {
             const wlX = lightPositions[i * 3] - wallHit.x;
             const wlY = lightPositions[i * 3 + 1] - wallHit.y;
             const wlZ = lightPositions[i * 3 + 2] - wallHit.z;
-            const wlInvLen = 1 / Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
-            wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+            const wlLen = Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
+            if (wlLen > 0) {
+              const inv = 1 / wlLen;
+              // Same inverse-square attenuation as the direct pass
+              wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * inv) / Math.max(0.01, wlLen * wlLen);
+              if (type === 'spot') {
+                // Respect the cone: bounce only where the spot actually shines
+                const LdotAxis = -((wlX * inv) * spotAxes[i][0] + (wlY * inv) * spotAxes[i][1] + (wlZ * inv) * spotAxes[i][2]);
+                const cosAngle = Math.cos((lightAngles[i] * Math.PI) / 180);
+                if (LdotAxis <= cosAngle) {
+                  wallDiffuse = 0;
+                } else {
+                  const edge = (LdotAxis - cosAngle) / (1 - cosAngle);
+                  wallDiffuse *= edge * edge * (3 - 2 * edge);
+                }
+              }
+            }
           }
           wallLightR += lightColors[i * 3] * wallDiffuse * lightIntensities[i];
           wallLightG += lightColors[i * 3 + 1] * wallDiffuse * lightIntensities[i];
