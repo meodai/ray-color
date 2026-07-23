@@ -39,8 +39,10 @@ const lights: Light[] = [
 ];
 
 interface Sample {
-  dir: Float32Array; // unit direction from sphere center (surface anchor)
-  color: Float32Array;
+  // Float64 to match the renderer's precision exactly — float32 rounding
+  // shows up as off-by-one channel values after sRGB encoding
+  dir: Float64Array; // unit direction from sphere center (surface anchor)
+  color: Float64Array;
   marker: HTMLElement;
 }
 let samples: Sample[] = [];
@@ -56,12 +58,25 @@ const lightAngles = new Float32Array(3);
 const directionalDirs = new Array(3).fill(null).map(() => new Float32Array(3));
 const spotAxes = new Array(3).fill(null).map(() => new Float32Array(3));
 
+// sRGB <-> linear: inputs (color pickers) are decoded to linear light for the
+// shading math; results are encoded back to sRGB only when written to pixels.
+const srgbToLinear = (s: number) => s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+
+// Linear -> 8-bit sRGB via LUT (4096 steps is sub-LSB across the curve)
+const SRGB_LUT = new Uint8Array(4096);
+for (let i = 0; i < 4096; i++) {
+  const c = i / 4095;
+  const s = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  SRGB_LUT[i] = Math.min(255, Math.round(s * 255));
+}
+const toSRGB8 = (c: number) => SRGB_LUT[c >= 1 ? 4095 : c <= 0 ? 0 : (c * 4095 + 0.5) | 0];
+
 function hexToRgb(hex: string, out: Float32Array) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (result) {
-    out[0] = parseInt(result[1], 16) / 255;
-    out[1] = parseInt(result[2], 16) / 255;
-    out[2] = parseInt(result[3], 16) / 255;
+    out[0] = srgbToLinear(parseInt(result[1], 16) / 255);
+    out[1] = srgbToLinear(parseInt(result[2], 16) / 255);
+    out[2] = srgbToLinear(parseInt(result[3], 16) / 255);
   }
   return out;
 }
@@ -99,6 +114,15 @@ let cachedTanFov = 0, cachedAspectRatio = 1, cachedAspectTanFov = 0;
 let rayDirectionCache: Float32Array | null = null;
 let cacheWidth = 0, cacheHeight = 0, cachedRayFOV = -1;
 
+// G-buffer: per-pixel primary-hit cache (kind, position, normal). Valid while
+// the camera and sphere geometry are unchanged — light edits then skip all
+// primary intersection work and only re-shade.
+let gbKind: Uint8Array = new Uint8Array(0);   // 0 miss · 1 sphere · 2 wall
+let gbData: Float64Array = new Float64Array(0); // x y z nx ny nz per pixel (f64 = exact re-shades)
+let gbStamp: Uint32Array = new Uint32Array(0);
+let geomStamp = 1;
+let gbCameraZ = NaN, gbFov = NaN, gbRadius = NaN;
+
 function updateCache() {
   cachedTanFov = Math.tan(((state.fov * Math.PI) / 180) / 2);
   cachedAspectRatio = canvas.width / canvas.height;
@@ -111,6 +135,9 @@ function updateCache() {
   cacheHeight = canvas.height;
   cachedRayFOV = state.fov;
   rayDirectionCache = new Float32Array(cacheWidth * cacheHeight * 3);
+  gbKind = new Uint8Array(cacheWidth * cacheHeight);
+  gbData = new Float64Array(cacheWidth * cacheHeight * 6);
+  gbStamp = new Uint32Array(cacheWidth * cacheHeight);
   for (let y = 0; y < cacheHeight; y++) {
     for (let x = 0; x < cacheWidth; x++) {
       const idx = (y * cacheWidth + x) * 3;
@@ -126,6 +153,12 @@ function updateCache() {
 
 // ---------------------------------------------------------------- raycaster core
 
+// Reusable hit records — the hot loops run millions of intersections per
+// second, so hits are written into scratch objects instead of fresh ones.
+// Callers must consume a hit before the next call of the same function.
+const sphereHitScratch = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, t: 0 };
+const roomHitScratch = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, t: 0 };
+
 function intersectSphere(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number, radius: number) {
   const a = dirX * dirX + dirY * dirY + dirZ * dirZ;
   const b = 2 * (originX * dirX + originY * dirY + originZ * dirZ);
@@ -140,7 +173,25 @@ function intersectSphere(originX: number, originY: number, originZ: number, dirX
   const hitY = originY + dirY * t;
   const hitZ = originZ + dirZ * t;
   const invRadius = 1 / radius;
-  return { x: hitX, y: hitY, z: hitZ, nx: hitX * invRadius, ny: hitY * invRadius, nz: hitZ * invRadius, t };
+  const s = sphereHitScratch;
+  s.x = hitX; s.y = hitY; s.z = hitZ;
+  s.nx = hitX * invRadius; s.ny = hitY * invRadius; s.nz = hitZ * invRadius;
+  s.t = t;
+  return s;
+}
+
+// Shadow rays only need the hit distance — no hit point, no allocation
+function sphereShadowT(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number, radius: number) {
+  const a = dirX * dirX + dirY * dirY + dirZ * dirZ;
+  const b = 2 * (originX * dirX + originY * dirY + originZ * dirZ);
+  const c = originX * originX + originY * originY + originZ * originZ - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  const sqrtD = Math.sqrt(disc);
+  let t = (-b - sqrtD) / (2 * a);
+  if (t < 0) t = (-b + sqrtD) / (2 * a);
+  if (t < 0) return Infinity;
+  return t;
 }
 
 function intersectRoom(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number) {
@@ -173,10 +224,13 @@ function intersectRoom(originX: number, originY: number, originZ: number, dirX: 
     }
   }
   if (minT === Infinity) return null;
-  return {
-    x: originX + dirX * minT, y: originY + dirY * minT, z: originZ + dirZ * minT,
-    nx: nX, ny: nY, nz: nZ, t: minT
-  };
+  const s = roomHitScratch;
+  s.x = originX + dirX * minT;
+  s.y = originY + dirY * minT;
+  s.z = originZ + dirZ * minT;
+  s.nx = nX; s.ny = nY; s.nz = nZ;
+  s.t = minT;
+  return s;
 }
 
 const indirectDirs = [
@@ -210,8 +264,8 @@ function calculateLighting(
       const Lx = directionalDirs[i][0];
       const Ly = directionalDirs[i][1];
       const Lz = directionalDirs[i][2];
-      const shadowHit = intersectSphere(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
-      if (!shadowHit) {
+      const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
+      if (shadowT === Infinity) {
         const NdotL = Math.max(0, normalX * Lx + normalY * Ly + normalZ * Lz);
         lightContribR = lightColors[i * 3] * NdotL * intensity;
         lightContribG = lightColors[i * 3 + 1] * NdotL * intensity;
@@ -226,8 +280,8 @@ function calculateLighting(
         const LdotAxis = -(Lx * Ax + Ly * Ay + Lz * Az);
         const cosAngle = Math.cos((lightAngles[i] * Math.PI) / 180);
         if (LdotAxis > cosAngle) {
-          const shadowHit = intersectSphere(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
-          if (!shadowHit || shadowHit.t >= dist) {
+          const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
+          if (shadowT >= dist) {
             const edge = (LdotAxis - cosAngle) / (1 - cosAngle);
             const falloff = edge * edge * (3 - 2 * edge);
             const NdotL = Math.max(0, normalX * Lx + normalY * Ly + normalZ * Lz);
@@ -255,8 +309,8 @@ function calculateLighting(
         const dist = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
         if (dist === 0) continue;
         Lx /= dist; Ly /= dist; Lz /= dist;
-        const shadowHit = intersectSphere(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
-        if (shadowHit && shadowHit.t < dist) continue;
+        const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
+        if (shadowT < dist) continue;
         const NdotL = Math.max(0, normalX * Lx + normalY * Ly + normalZ * Lz);
         const att = 1 / Math.max(0.01, dist * dist);
         accumR += lightColors[i * 3] * NdotL * att;
@@ -310,47 +364,79 @@ function calculateLighting(
     colorG += indirectG * indirectScale;
     colorB += indirectB * indirectScale;
   }
-  return { r: colorR * objColorR, g: colorG * objColorG, b: colorB * objColorB };
+  shadeScratch.r = colorR * objColorR;
+  shadeScratch.g = colorG * objColorG;
+  shadeScratch.b = colorB * objColorB;
+  return shadeScratch;
 }
 
-function renderPass(scale: number) {
+// Shading result scratch — consumed immediately by every caller
+const shadeScratch = { r: 0, g: 0, b: 0 };
+
+// skipStride: pixels whose coordinates are multiples of it were already
+// computed exactly by the previous (coarser) pass — leave them untouched
+function renderPass(scale: number, skipStride = 0) {
   const width = canvas.width;
   const height = canvas.height;
-  const useCache = (scale === 1 && rayDirectionCache);
   for (let y = 0; y < height; y += scale) {
     for (let x = 0; x < width; x += scale) {
-      let dirX, dirY, dirZ;
-      if (useCache && rayDirectionCache) {
-        const idx = (y * width + x) * 3;
-        dirX = rayDirectionCache[idx];
-        dirY = rayDirectionCache[idx + 1];
-        dirZ = rayDirectionCache[idx + 2];
-      } else {
-        const px = (2 * ((x + 0.5) / width) - 1) * cachedAspectTanFov;
-        const py = -(2 * ((y + 0.5) / height) - 1) * cachedTanFov;
-        const len = Math.sqrt(px * px + py * py + 1);
-        dirX = px / len;
-        dirY = py / len;
-        dirZ = 1 / len;
-      }
-      const sphereHit = intersectSphere(0, 0, state.cameraZ, dirX, dirY, dirZ, state.sphereRadius);
+      if (skipStride !== 0 && x % skipStride === 0 && y % skipStride === 0) continue;
+      const pix = y * width + x;
       let color;
-      if (sphereHit) {
-        color = calculateLighting(sphereHit.x, sphereHit.y, sphereHit.z, sphereHit.nx, sphereHit.ny, sphereHit.nz, sphereColor[0], sphereColor[1], sphereColor[2]);
-      } else {
-        const roomHit = intersectRoom(0, 0, state.cameraZ, dirX, dirY, dirZ);
-        if (roomHit) {
-          color = calculateLighting(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, wallColor[0], wallColor[1], wallColor[2], false);
+      if (gbStamp[pix] === geomStamp) {
+        // Geometry unchanged since last render: re-shade the cached hit
+        const kind = gbKind[pix];
+        if (kind === 1) {
+          const o = pix * 6;
+          color = calculateLighting(gbData[o], gbData[o + 1], gbData[o + 2], gbData[o + 3], gbData[o + 4], gbData[o + 5], sphereColor[0], sphereColor[1], sphereColor[2]);
+        } else if (kind === 2) {
+          const o = pix * 6;
+          color = calculateLighting(gbData[o], gbData[o + 1], gbData[o + 2], gbData[o + 3], gbData[o + 4], gbData[o + 5], wallColor[0], wallColor[1], wallColor[2], false);
           color.r *= 0.5;
           color.g *= 0.5;
           color.b *= 0.5;
         } else {
-          color = { r: 0, g: 0, b: 0 };
+          color = shadeScratch;
+          color.r = 0; color.g = 0; color.b = 0;
         }
+      } else {
+        const ri = pix * 3;
+        const dirX = rayDirectionCache![ri];
+        const dirY = rayDirectionCache![ri + 1];
+        const dirZ = rayDirectionCache![ri + 2];
+        const o = pix * 6;
+        const sphereHit = intersectSphere(0, 0, state.cameraZ, dirX, dirY, dirZ, state.sphereRadius);
+        if (sphereHit) {
+          // Shade at normal * radius — the exact reconstruction samples use,
+          // so a sampled color always matches its rendered pixel bit-for-bit
+          const hx = sphereHit.nx * state.sphereRadius;
+          const hy = sphereHit.ny * state.sphereRadius;
+          const hz = sphereHit.nz * state.sphereRadius;
+          gbKind[pix] = 1;
+          gbData[o] = hx; gbData[o + 1] = hy; gbData[o + 2] = hz;
+          gbData[o + 3] = sphereHit.nx; gbData[o + 4] = sphereHit.ny; gbData[o + 5] = sphereHit.nz;
+          color = calculateLighting(hx, hy, hz, sphereHit.nx, sphereHit.ny, sphereHit.nz, sphereColor[0], sphereColor[1], sphereColor[2]);
+        } else {
+          const roomHit = intersectRoom(0, 0, state.cameraZ, dirX, dirY, dirZ);
+          if (roomHit) {
+            gbKind[pix] = 2;
+            gbData[o] = roomHit.x; gbData[o + 1] = roomHit.y; gbData[o + 2] = roomHit.z;
+            gbData[o + 3] = roomHit.nx; gbData[o + 4] = roomHit.ny; gbData[o + 5] = roomHit.nz;
+            color = calculateLighting(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, wallColor[0], wallColor[1], wallColor[2], false);
+            color.r *= 0.5;
+            color.g *= 0.5;
+            color.b *= 0.5;
+          } else {
+            gbKind[pix] = 0;
+            color = shadeScratch;
+            color.r = 0; color.g = 0; color.b = 0;
+          }
+        }
+        gbStamp[pix] = geomStamp;
       }
-      const r = Math.min(255, color.r * 255) | 0;
-      const g = Math.min(255, color.g * 255) | 0;
-      const b = Math.min(255, color.b * 255) | 0;
+      const r = toSRGB8(color.r);
+      const g = toSRGB8(color.g);
+      const b = toSRGB8(color.b);
       for (let py = 0; py < scale && y + py < height; py++) {
         for (let px = 0; px < scale && x + px < width; px++) {
           const idx = ((y + py) * width + (x + px)) * 4;
@@ -367,8 +453,15 @@ function renderPass(scale: number) {
 
 async function startRender() {
   updateCache();
+  // Invalidate the G-buffer when anything that shapes primary rays changed
+  if (gbCameraZ !== state.cameraZ || gbFov !== state.fov || gbRadius !== state.sphereRadius) {
+    geomStamp++;
+    gbCameraZ = state.cameraZ;
+    gbFov = state.fov;
+    gbRadius = state.sphereRadius;
+  }
   for (let pass = 0; pass < passScales.length; pass++) {
-    renderPass(passScales[pass]);
+    renderPass(passScales[pass], pass === 0 ? 0 : passScales[pass - 1]);
     await new Promise(requestAnimationFrame);
   }
 }
@@ -403,8 +496,11 @@ function worldToScreen(px: number, py: number, pz: number) {
 
 function eventToCanvasPixels(clientX: number, clientY: number, clamp = true) {
   const rect = canvas.getBoundingClientRect();
-  let x = (clientX - rect.left) * (canvas.width / rect.width);
-  let y = (clientY - rect.top) * (canvas.height / rect.height);
+  // Exclude the canvas border from the mapping (rect includes it)
+  const bx = (rect.width - canvas.clientWidth) / 2;
+  const by = (rect.height - canvas.clientHeight) / 2;
+  let x = (clientX - rect.left - bx) * (canvas.width / canvas.clientWidth);
+  let y = (clientY - rect.top - by) * (canvas.height / canvas.clientHeight);
   if (clamp) {
     x = Math.min(canvas.width - 1, Math.max(0, x));
     y = Math.min(canvas.height - 1, Math.max(0, y));
@@ -430,7 +526,7 @@ function castRayAt(x: number, y: number) {
   return intersectSphere(0, 0, state.cameraZ, dirX, dirY, dirZ, state.sphereRadius);
 }
 
-function sampleColorAt(dir: Float32Array) {
+function sampleColorAt(dir: Float64Array) {
   const r = state.sphereRadius;
   return calculateLighting(dir[0] * r, dir[1] * r, dir[2] * r, dir[0], dir[1], dir[2], sphereColor[0], sphereColor[1], sphereColor[2]);
 }
@@ -661,7 +757,7 @@ function updateOrbitGlobe() {
   orbitDot.style.backgroundColor = l.hex;
   // On the far hemisphere the dot drops behind the wireframe, greyed like the back arcs
   orbitDot.classList.toggle('orbit-dot--back', depth < 0);
-  orbitOut.textContent = `${l.yaw}° / ${l.pitch}°`;
+  orbitOut.textContent = `${Math.round(l.yaw)}° / ${Math.round(l.pitch)}°`;
 }
 
 // Trackball dragging: relative to where the light was — pressing never jumps
@@ -828,7 +924,8 @@ let selectedSample: Sample | null = null;
 function cssStops(): string {
   const seg = 100 / samples.length;
   return samples.map((s, i) => {
-    const r = Math.floor(s.color[0] * 255), g = Math.floor(s.color[1] * 255), b = Math.floor(s.color[2] * 255);
+    // Same sRGB encoding as the renderer, so stops match the pixels exactly
+    const r = toSRGB8(s.color[0]), g = toSRGB8(s.color[1]), b = toSRGB8(s.color[2]);
     const end = i === samples.length - 1 ? 100 : (i + 1) * seg;
     return `rgb(${r}, ${g}, ${b}) ${(i * seg).toFixed(1)}% ${end.toFixed(1)}%`;
   }).join(', ');
@@ -895,11 +992,11 @@ canvas.addEventListener('click', event => {
   const { x, y } = eventToCanvasPixels(event.clientX, event.clientY);
   const hit = castRayAt(x, y);
   if (!hit) return;
-  const dir = new Float32Array([hit.nx, hit.ny, hit.nz]);
+  const dir = new Float64Array([hit.nx, hit.ny, hit.nz]);
   const color = sampleColorAt(dir);
   const marker = document.createElement('div');
   marker.className = 'marker sample-marker';
-  const sample: Sample = { dir, color: new Float32Array([color.r, color.g, color.b]), marker };
+  const sample: Sample = { dir, color: new Float64Array([color.r, color.g, color.b]), marker };
   marker.addEventListener('pointerdown', e => beginSampleDrag(e, sample));
   sampleLayer.appendChild(marker);
   updateSampleMarker(sample);
@@ -1029,6 +1126,63 @@ document.addEventListener('pointerdown', e => {
   if (!scenePopover.contains(t) && t !== sceneBtn && !sceneBtn.contains(t)) {
     scenePopover.hidden = true;
     sceneBtn.setAttribute('aria-expanded', 'false');
+  }
+});
+
+// ---------------------------------------------------------------- play: orbit the lights
+
+const playBtn = document.getElementById('playBtn') as HTMLButtonElement;
+// Each light orbits around its own axis: horizontal ring, vertical loop over
+// the poles, and a circle in the view plane — at slightly different speeds
+const ORBIT_AXES = [
+  { axis: 'y', speed: 24 },
+  { axis: 'x', speed: -18 },
+  { axis: 'z', speed: 21 },
+] as const;
+let playing = false;
+let lastFrameTime = 0;
+
+function playFrame(now: number) {
+  if (!playing) return;
+  const dt = Math.min(100, now - lastFrameTime); // clamp pauses (tab switches)
+  lastFrameTime = now;
+  for (let i = 0; i < 3; i++) {
+    const l = lights[i];
+    const { axis, speed } = ORBIT_AXES[i];
+    const a = (speed * dt / 1000) * Math.PI / 180;
+    const yaw = l.yaw * Math.PI / 180;
+    const pitch = l.pitch * Math.PI / 180;
+    let vx = Math.cos(pitch) * Math.cos(yaw);
+    let vy = Math.sin(pitch);
+    let vz = Math.cos(pitch) * Math.sin(yaw);
+    const c = Math.cos(a), s = Math.sin(a);
+    if (axis === 'y') {
+      const nx = vx * c - vz * s;
+      vz = vx * s + vz * c;
+      vx = nx;
+    } else if (axis === 'x') {
+      const ny = vy * c - vz * s;
+      vz = vy * s + vz * c;
+      vy = ny;
+    } else {
+      const nx = vx * c - vy * s;
+      vy = vx * s + vy * c;
+      vx = nx;
+    }
+    l.pitch = Math.max(-89, Math.min(89, Math.asin(Math.max(-1, Math.min(1, vy))) * 180 / Math.PI));
+    l.yaw = Math.atan2(vz, vx) * 180 / Math.PI;
+  }
+  update();
+  requestAnimationFrame(playFrame);
+}
+
+playBtn.addEventListener('click', () => {
+  playing = !playing;
+  playBtn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+  playBtn.setAttribute('aria-pressed', String(playing));
+  if (playing) {
+    lastFrameTime = performance.now();
+    requestAnimationFrame(playFrame);
   }
 });
 

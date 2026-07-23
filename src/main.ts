@@ -26,8 +26,10 @@ let indirectIntensity = 0.3;
 let lightSize = 0.15;
 const MAX_LIGHT_DISTANCE = 12;
 interface ColorSample {
-  dir: Float32Array; // unit direction from sphere center — anchors the sample to the surface
-  color: Float32Array;
+  // Float64 to match the renderer's precision exactly — float32 rounding
+  // shows up as off-by-one channel values after sRGB encoding
+  dir: Float64Array; // unit direction from sphere center — anchors the sample to the surface
+  color: Float64Array;
   marker: HTMLElement;
 }
 let samples: ColorSample[] = [];
@@ -59,6 +61,15 @@ let cachedFovRad: number, cachedTanFov: number, cachedAspectRatio: number, cache
 let rayDirectionCache: Float32Array | null = null;
 let cacheWidth = 0, cacheHeight = 0, cachedRayFOV = -1;
 
+// G-buffer: per-pixel primary-hit cache (kind, position, normal). Valid while
+// the camera and sphere geometry are unchanged — light edits then skip all
+// primary intersection work and only re-shade.
+let gbKind: Uint8Array = new Uint8Array(0);   // 0 miss · 1 sphere · 2 wall
+let gbData: Float64Array = new Float64Array(0); // x y z nx ny nz per pixel (f64 = exact re-shades)
+let gbStamp: Uint32Array = new Uint32Array(0);
+let geomStamp = 1;
+let gbCameraZ = NaN, gbFov = NaN, gbRadius = NaN;
+
 function updateCache() {
   cachedFovRad = (cameraFOV * Math.PI) / 180;
   cachedTanFov = Math.tan(cachedFovRad / 2);
@@ -74,6 +85,9 @@ function updateCache() {
   cacheHeight = canvas.height;
   cachedRayFOV = cameraFOV;
   rayDirectionCache = new Float32Array(cacheWidth * cacheHeight * 3);
+  gbKind = new Uint8Array(cacheWidth * cacheHeight);
+  gbData = new Float64Array(cacheWidth * cacheHeight * 6);
+  gbStamp = new Uint32Array(cacheWidth * cacheHeight);
 
   for (let y = 0; y < cacheHeight; y++) {
     for (let x = 0; x < cacheWidth; x++) {
@@ -89,12 +103,25 @@ function updateCache() {
   }
 }
 
+// sRGB <-> linear: inputs (color pickers) are decoded to linear light for the
+// shading math; results are encoded back to sRGB only when written to pixels.
+const srgbToLinear = (s: number) => s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+
+// Linear -> 8-bit sRGB via LUT (4096 steps is sub-LSB across the curve)
+const SRGB_LUT = new Uint8Array(4096);
+for (let i = 0; i < 4096; i++) {
+  const c = i / 4095;
+  const s = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  SRGB_LUT[i] = Math.min(255, Math.round(s * 255));
+}
+const toSRGB8 = (c: number) => SRGB_LUT[c >= 1 ? 4095 : c <= 0 ? 0 : (c * 4095 + 0.5) | 0];
+
 function hexToRgb(hex: string, out: Float32Array) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (result) {
-    out[0] = parseInt(result[1], 16) / 255;
-    out[1] = parseInt(result[2], 16) / 255;
-    out[2] = parseInt(result[3], 16) / 255;
+    out[0] = srgbToLinear(parseInt(result[1], 16) / 255);
+    out[1] = srgbToLinear(parseInt(result[2], 16) / 255);
+    out[2] = srgbToLinear(parseInt(result[3], 16) / 255);
   }
   return out;
 }
@@ -111,9 +138,10 @@ function updateGradientStops() {
   const seg = 100 / samples.length;
   for (let i = 0; i < samples.length; i++) {
     const sample = samples[i];
-    const r = Math.floor(sample.color[0] * 255);
-    const g = Math.floor(sample.color[1] * 255);
-    const b = Math.floor(sample.color[2] * 255);
+    // Same sRGB encoding as the renderer, so stops match the pixels exactly
+    const r = toSRGB8(sample.color[0]);
+    const g = toSRGB8(sample.color[1]);
+    const b = toSRGB8(sample.color[2]);
     const color = `rgb(${r}, ${g}, ${b})`;
     const startPercent = (i * seg);
     const endPercent = (i === samples.length - 1) ? 100 : ((i + 1) * seg);
@@ -125,7 +153,12 @@ function updateGradientStops() {
 }
 
 
-// Optimization 5: Early ray termination with bounding checks
+// Reusable hit records — the hot loops run millions of intersections per
+// second, so hits are written into scratch objects instead of fresh ones.
+// Callers must consume a hit before the next call of the same function.
+const sphereHitScratch = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, t: 0 };
+const roomHitScratch = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, t: 0 };
+
 function intersectSphere(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number, radius: number) {
   const a = dirX * dirX + dirY * dirY + dirZ * dirZ; // usually 1 for normalized dirs
   const b = 2 * (originX * dirX + originY * dirY + originZ * dirZ);
@@ -140,13 +173,25 @@ function intersectSphere(originX: number, originY: number, originZ: number, dirX
   const hitY = originY + dirY * t;
   const hitZ = originZ + dirZ * t;
   const invRadius = 1 / radius;
-  return {
-    x: hitX, y: hitY, z: hitZ,
-    nx: hitX * invRadius,
-    ny: hitY * invRadius,
-    nz: hitZ * invRadius,
-    t
-  };
+  const s = sphereHitScratch;
+  s.x = hitX; s.y = hitY; s.z = hitZ;
+  s.nx = hitX * invRadius; s.ny = hitY * invRadius; s.nz = hitZ * invRadius;
+  s.t = t;
+  return s;
+}
+
+// Shadow rays only need the hit distance — no hit point, no allocation
+function sphereShadowT(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number, radius: number) {
+  const a = dirX * dirX + dirY * dirY + dirZ * dirZ;
+  const b = 2 * (originX * dirX + originY * dirY + originZ * dirZ);
+  const c = originX * originX + originY * originY + originZ * originZ - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  const sqrtD = Math.sqrt(disc);
+  let t = (-b - sqrtD) / (2 * a);
+  if (t < 0) t = (-b + sqrtD) / (2 * a);
+  if (t < 0) return Infinity;
+  return t;
 }
 
 
@@ -216,15 +261,13 @@ function intersectRoom(originX: number, originY: number, originZ: number, dirX: 
     }
   }
   if (minT === Infinity) return null;
-  return {
-    x: originX + dirX * minT,
-    y: originY + dirY * minT,
-    z: originZ + dirZ * minT,
-    nx: hitNormalX,
-    ny: hitNormalY,
-    nz: hitNormalZ,
-    t: minT
-  };
+  const s = roomHitScratch;
+  s.x = originX + dirX * minT;
+  s.y = originY + dirY * minT;
+  s.z = originZ + dirZ * minT;
+  s.nx = hitNormalX; s.ny = hitNormalY; s.nz = hitNormalZ;
+  s.t = minT;
+  return s;
 }
 
 
@@ -258,14 +301,14 @@ function calculateLighting(
       let Lx = directionalDirs[i][0];
       let Ly = directionalDirs[i][1];
       let Lz = directionalDirs[i][2];
-      const shadowHit = intersectSphere(
+      const shadowT = sphereShadowT(
         hitX + normalX * bias,
         hitY + normalY * bias,
         hitZ + normalZ * bias,
         Lx, Ly, Lz,
         sphereRadius
       );
-      if (!shadowHit) {
+      if (shadowT === Infinity) {
         const NdotL = Math.max(0, normalX * Lx + normalY * Ly + normalZ * Lz);
         lightContribR = lightColors[i * 3] * NdotL * intensity;
         lightContribG = lightColors[i * 3 + 1] * NdotL * intensity;
@@ -286,14 +329,14 @@ function calculateLighting(
         const angleRad = (lightAngles[i] * Math.PI) / 180;
         const cosAngle = Math.cos(angleRad);
         if (LdotAxis > cosAngle) {
-          const shadowHit = intersectSphere(
+          const shadowT = sphereShadowT(
             hitX + normalX * bias,
             hitY + normalY * bias,
             hitZ + normalZ * bias,
             Lx, Ly, Lz,
             sphereRadius
           );
-            if (!shadowHit || shadowHit.t >= dist) {
+            if (shadowT >= dist) {
               const edge = (LdotAxis - cosAngle) / (1 - cosAngle);
               // Smoothstep falloff (3x^2 - 2x^3)
               const falloff = edge * edge * (3 - 2 * edge);
@@ -329,14 +372,14 @@ function calculateLighting(
         const dist = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
         if (dist === 0) continue;
         Lx /= dist; Ly /= dist; Lz /= dist;
-        const shadowHit = intersectSphere(
+        const shadowT = sphereShadowT(
           hitX + normalX * bias,
           hitY + normalY * bias,
           hitZ + normalZ * bias,
           Lx, Ly, Lz,
           sphereRadius
         );
-        if (shadowHit && shadowHit.t < dist) continue; // occluded
+        if (shadowT < dist) continue; // occluded
         const NdotL = Math.max(0, normalX * Lx + normalY * Ly + normalZ * Lz);
         const att = 1 / Math.max(0.01, dist * dist);
         accumR += lightColors[i * 3] * NdotL * att;
@@ -408,12 +451,14 @@ function calculateLighting(
     colorG += indirectG * indirectScale;
     colorB += indirectB * indirectScale;
   }
-  return {
-    r: colorR * objColorR,
-    g: colorG * objColorG,
-    b: colorB * objColorB
-  };
+  shadeScratch.r = colorR * objColorR;
+  shadeScratch.g = colorG * objColorG;
+  shadeScratch.b = colorB * objColorB;
+  return shadeScratch;
 }
+
+// Shading result scratch — consumed immediately by every caller
+const shadeScratch = { r: 0, g: 0, b: 0 };
 
 function worldToScreen(pointX: number, pointY: number, pointZ: number) {
   const relativeZ = pointZ - cameraZ;
@@ -593,9 +638,10 @@ function updateSamplesList() {
     item.className = 'sample-item';
     const colorBox = document.createElement('div');
     colorBox.className = 'sample-color';
-    colorBox.style.backgroundColor = `rgb(${Math.floor(sample.color[0] * 255)}, ${Math.floor(sample.color[1] * 255)}, ${Math.floor(sample.color[2] * 255)})`;
+    const sr = toSRGB8(sample.color[0]), sg = toSRGB8(sample.color[1]), sb = toSRGB8(sample.color[2]);
+    colorBox.style.backgroundColor = `rgb(${sr}, ${sg}, ${sb})`;
     const text = document.createElement('div');
-    text.textContent = `RGB(${Math.floor(sample.color[0] * 255)}, ${Math.floor(sample.color[1] * 255)}, ${Math.floor(sample.color[2] * 255)})`;
+    text.textContent = `RGB(${sr}, ${sg}, ${sb})`;
     const removeBtn = document.createElement('button');
     removeBtn.className = 'remove-sample';
     removeBtn.textContent = '×';
@@ -612,59 +658,89 @@ function updateSamplesList() {
   });
 }
 
-function renderPass(scale: number) {
+// skipStride: pixels whose coordinates are multiples of it were already
+// computed exactly by the previous (coarser) pass — leave them untouched
+function renderPass(scale: number, skipStride = 0) {
   const startTime = performance.now();
   const width = canvas.width;
   const height = canvas.height;
-  const useCache = (scale === 1 && rayDirectionCache);
   for (let y = 0; y < height; y += scale) {
     for (let x = 0; x < width; x += scale) {
-      let dirX, dirY, dirZ;
-      if (useCache && rayDirectionCache) {
-        const idx = (y * width + x) * 3;
-        dirX = rayDirectionCache[idx];
-        dirY = rayDirectionCache[idx + 1];
-        dirZ = rayDirectionCache[idx + 2];
-      } else {
-        const px = (2 * ((x + 0.5) / width) - 1) * cachedAspectTanFov;
-        const py = -(2 * ((y + 0.5) / height) - 1) * cachedTanFov;
-        const len = Math.sqrt(px * px + py * py + 1);
-        dirX = px / len;
-        dirY = py / len;
-        dirZ = 1 / len;
-      }
-      const sphereHit = intersectSphere(0, 0, cameraZ, dirX, dirY, dirZ, sphereRadius);
-      // Early culling: only compute room intersection if no sphere hit or sphere farther
-      let roomHit = null;
-      if (!sphereHit) {
-        roomHit = intersectRoom(0, 0, cameraZ, dirX, dirY, dirZ);
-      } else {
-        // quick conservative test: sphereHit distance vs min possible plane distance (cameraZ to +Z wall along dir)
-        // If direction points away from most planes we still may skip; keep simple for now.
-      }
+      if (skipStride !== 0 && x % skipStride === 0 && y % skipStride === 0) continue;
+      const pix = y * width + x;
       let color;
-      if (sphereHit && (!roomHit || sphereHit.t < (roomHit as any)?.t)) {
-        color = calculateLighting(
-          sphereHit.x, sphereHit.y, sphereHit.z,
-          sphereHit.nx, sphereHit.ny, sphereHit.nz,
-          sphereColor[0], sphereColor[1], sphereColor[2]
-        );
-      } else if (!sphereHit && roomHit) {
-        color = calculateLighting(
-          roomHit.x, roomHit.y, roomHit.z,
-          roomHit.nx, roomHit.ny, roomHit.nz,
-          wallColor[0], wallColor[1], wallColor[2],
-          false
-        );
-        color.r *= 0.5;
-        color.g *= 0.5;
-        color.b *= 0.5;
+      if (gbStamp[pix] === geomStamp) {
+        // Geometry unchanged since last render: re-shade the cached hit
+        const kind = gbKind[pix];
+        if (kind === 1) {
+          const o = pix * 6;
+          color = calculateLighting(
+            gbData[o], gbData[o + 1], gbData[o + 2],
+            gbData[o + 3], gbData[o + 4], gbData[o + 5],
+            sphereColor[0], sphereColor[1], sphereColor[2]
+          );
+        } else if (kind === 2) {
+          const o = pix * 6;
+          color = calculateLighting(
+            gbData[o], gbData[o + 1], gbData[o + 2],
+            gbData[o + 3], gbData[o + 4], gbData[o + 5],
+            wallColor[0], wallColor[1], wallColor[2],
+            false
+          );
+          color.r *= 0.5;
+          color.g *= 0.5;
+          color.b *= 0.5;
+        } else {
+          color = shadeScratch;
+          color.r = 0; color.g = 0; color.b = 0;
+        }
       } else {
-        color = { r: 0, g: 0, b: 0 };
+        const ri = pix * 3;
+        const dirX = rayDirectionCache![ri];
+        const dirY = rayDirectionCache![ri + 1];
+        const dirZ = rayDirectionCache![ri + 2];
+        const o = pix * 6;
+        const sphereHit = intersectSphere(0, 0, cameraZ, dirX, dirY, dirZ, sphereRadius);
+        if (sphereHit) {
+          // Shade at normal * radius — the exact reconstruction samples use,
+          // so a sampled color always matches its rendered pixel bit-for-bit
+          const hx = sphereHit.nx * sphereRadius;
+          const hy = sphereHit.ny * sphereRadius;
+          const hz = sphereHit.nz * sphereRadius;
+          gbKind[pix] = 1;
+          gbData[o] = hx; gbData[o + 1] = hy; gbData[o + 2] = hz;
+          gbData[o + 3] = sphereHit.nx; gbData[o + 4] = sphereHit.ny; gbData[o + 5] = sphereHit.nz;
+          color = calculateLighting(
+            hx, hy, hz,
+            sphereHit.nx, sphereHit.ny, sphereHit.nz,
+            sphereColor[0], sphereColor[1], sphereColor[2]
+          );
+        } else {
+          const roomHit = intersectRoom(0, 0, cameraZ, dirX, dirY, dirZ);
+          if (roomHit) {
+            gbKind[pix] = 2;
+            gbData[o] = roomHit.x; gbData[o + 1] = roomHit.y; gbData[o + 2] = roomHit.z;
+            gbData[o + 3] = roomHit.nx; gbData[o + 4] = roomHit.ny; gbData[o + 5] = roomHit.nz;
+            color = calculateLighting(
+              roomHit.x, roomHit.y, roomHit.z,
+              roomHit.nx, roomHit.ny, roomHit.nz,
+              wallColor[0], wallColor[1], wallColor[2],
+              false
+            );
+            color.r *= 0.5;
+            color.g *= 0.5;
+            color.b *= 0.5;
+          } else {
+            gbKind[pix] = 0;
+            color = shadeScratch;
+            color.r = 0; color.g = 0; color.b = 0;
+          }
+        }
+        gbStamp[pix] = geomStamp;
       }
-      const r = Math.min(255, color.r * 255) | 0;
-      const g = Math.min(255, color.g * 255) | 0;
-      const b = Math.min(255, color.b * 255) | 0;
+      const r = toSRGB8(color.r);
+      const g = toSRGB8(color.g);
+      const b = toSRGB8(color.b);
       for (let py = 0; py < scale && y + py < height; py++) {
         for (let px = 0; px < scale && x + px < width; px++) {
           const idx = ((y + py) * width + (x + px)) * 4;
@@ -686,8 +762,11 @@ function renderPass(scale: number) {
 // clamp keeps the point on the canvas — needed for pixel lookups, not for aiming.
 function eventToCanvasPixels(clientX: number, clientY: number, clamp = true) {
   const rect = canvas.getBoundingClientRect();
-  let x = (clientX - rect.left) * (canvas.width / rect.width);
-  let y = (clientY - rect.top) * (canvas.height / rect.height);
+  // Exclude the canvas border from the mapping (rect includes it)
+  const bx = (rect.width - canvas.clientWidth) / 2;
+  const by = (rect.height - canvas.clientHeight) / 2;
+  let x = (clientX - rect.left - bx) * (canvas.width / canvas.clientWidth);
+  let y = (clientY - rect.top - by) * (canvas.height / canvas.clientHeight);
   if (clamp) {
     x = Math.min(canvas.width - 1, Math.max(0, x));
     y = Math.min(canvas.height - 1, Math.max(0, y));
@@ -715,7 +794,7 @@ function castRayAt(x: number, y: number) {
 }
 
 // Lit color of the surface point the unit direction points at
-function sampleColorAt(dir: Float32Array) {
+function sampleColorAt(dir: Float64Array) {
   return calculateLighting(
     dir[0] * sphereRadius, dir[1] * sphereRadius, dir[2] * sphereRadius,
     dir[0], dir[1], dir[2],
@@ -771,13 +850,13 @@ function handleCanvasClick(event: MouseEvent) {
   const { x, y } = eventToCanvasPixels(event.clientX, event.clientY);
   const hit = castRayAt(x, y);
   if (!hit) return;
-  const dir = new Float32Array([hit.nx, hit.ny, hit.nz]);
+  const dir = new Float64Array([hit.nx, hit.ny, hit.nz]);
   const color = sampleColorAt(dir);
   const marker = document.createElement('div');
   marker.className = 'marker sample-marker';
   const sample: ColorSample = {
     dir,
-    color: new Float32Array([color.r, color.g, color.b]),
+    color: new Float64Array([color.r, color.g, color.b]),
     marker: marker
   };
   marker.addEventListener('pointerdown', e => beginSampleDrag(e, sample));
@@ -851,8 +930,15 @@ function dragLightTo(clientX: number, clientY: number) {
 
 async function startRender() {
   updateCache();
+  // Invalidate the G-buffer when anything that shapes primary rays changed
+  if (gbCameraZ !== cameraZ || gbFov !== cameraFOV || gbRadius !== sphereRadius) {
+    geomStamp++;
+    gbCameraZ = cameraZ;
+    gbFov = cameraFOV;
+    gbRadius = sphereRadius;
+  }
   for (let pass = 0; pass < passScales.length; pass++) {
-    renderPass(passScales[pass]);
+    renderPass(passScales[pass], pass === 0 ? 0 : passScales[pass - 1]);
     await new Promise(requestAnimationFrame);
   }
   updateLightMarkers();
