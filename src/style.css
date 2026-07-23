@@ -128,14 +128,24 @@ canvas {
 }
 
 .gizmo-line-casing {
+  fill: none;
   stroke: rgba(0, 0, 0, 0.5);
   stroke-linecap: round;
 }
 
 .gizmo-line {
+  fill: none;
   stroke: rgba(255, 255, 255, 0.85);
   stroke-dasharray: 4 3;
   stroke-linecap: round;
+}
+
+/* Portion of the aim line hidden behind the sphere */
+.gizmo-line--hidden {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
 }
 
 .gizmo-area {

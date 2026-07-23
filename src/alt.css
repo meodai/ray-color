@@ -167,7 +167,12 @@ canvas {
 
 .hints {
   margin: 0;
-  position: relative;
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 15;
+  max-width: 96vw;
   font-size: .7rem;
   color: color-mix(in lab, currentColor 65%, var(--bg));
   background: var(--bg);
@@ -176,14 +181,24 @@ canvas {
 }
 
 .gizmo-line-casing {
+  fill: none;
   stroke: rgba(0, 0, 0, 0.5);
   stroke-linecap: round;
 }
 
 .gizmo-line {
+  fill: none;
   stroke: rgba(255, 255, 255, 0.85);
   stroke-dasharray: 4 3;
   stroke-linecap: round;
+}
+
+/* Portion of the aim line hidden behind the sphere */
+.gizmo-line--hidden {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
 }
 
 .gizmo-area {
@@ -192,45 +207,66 @@ canvas {
   stroke-dasharray: 3 3;
 }
 
-.gizmo-sphere {
+/* Orbit globe — arcball direction control in the inspector */
+
+.field--orbit {
+  align-items: stretch;
+}
+
+#orbit {
+  position: relative;
+  width: 6.5rem;
+  height: 6.5rem;
+  margin: .35rem auto 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  cursor: grab;
+  touch-action: none;
+}
+
+#orbit:active {
+  cursor: grabbing;
+}
+
+#orbit svg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+#orbit path {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.35);
-  stroke-dasharray: 2 3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
-.gizmo-arc-casing {
-  fill: none;
-  stroke: rgba(0, 0, 0, 0.5);
-  stroke-width: 3;
-  stroke-linecap: round;
+#orbit .front {
+  stroke: color-mix(in lab, currentColor 55%, transparent);
 }
 
-.gizmo-arc {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.85);
-  stroke-width: 1.5;
-  stroke-linecap: round;
+#orbit .back {
+  stroke: color-mix(in lab, currentColor 15%, transparent);
 }
 
-.gizmo-arrow {
-  fill: rgba(255, 255, 255, 0.9);
-  stroke: rgba(0, 0, 0, 0.4);
-  stroke-width: 0.75;
+#orbit-dot {
+  position: absolute;
+  z-index: 2;
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  background: var(--text);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 1px var(--text), 0 0 0 3px var(--bg);
 }
 
-.gizmo-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 16;
-  pointer-events: stroke;
-}
-
-.gizmo-hit--yaw {
-  cursor: ew-resize;
-}
-
-.gizmo-hit--pitch {
-  cursor: ns-resize;
+/* Direction points away from the viewer: smaller and behind the wireframe */
+.orbit-dot--back {
+  z-index: 0;
+  transform: translate(-50%, -50%) scale(.6);
 }
 
 /* Markers */

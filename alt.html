@@ -30,6 +30,18 @@
 
       <div class="popover popover--inspector" id="inspector" hidden>
         <div class="popover__title" id="inspTitle">Light 1</div>
+        <div class="field field--orbit">
+          <span class="field__row"><label id="orbitLabel">Direction</label><output id="orbitOut"></output></span>
+          <div id="orbit" title="Drag to spin the light around the sphere" aria-labelledby="orbitLabel">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <path id="arc-pb" class="back"></path>
+              <path id="arc-mb" class="back"></path>
+              <path id="arc-pf" class="front"></path>
+              <path id="arc-mf" class="front"></path>
+            </svg>
+            <div id="orbit-dot"></div>
+          </div>
+        </div>
         <div class="field">
           <span class="field__row"><label for="inspType">Type</label></span>
           <select id="inspType">
@@ -57,7 +69,7 @@
         </div>
       </div>
     </div>
-    <p class="hints">click sphere = sample &nbsp;·&nbsp; drag points &amp; lights = move &nbsp;·&nbsp; arcs = yaw / pitch &nbsp;·&nbsp; backspace = delete point &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
+    <p class="hints">click sphere = sample &nbsp;·&nbsp; drag points &amp; lights = move &nbsp;·&nbsp; globe = aim &nbsp;·&nbsp; backspace = delete point &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
   </main>
 
   <div class="popover popover--scene" id="scenePopover" hidden>

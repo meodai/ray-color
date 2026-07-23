@@ -283,11 +283,17 @@ function calculateLighting(
       if (wallHit) {
         let wallLightR = 0, wallLightG = 0, wallLightB = 0;
         for (let i = 0; i < 3; i++) {
-          const wlX = lightPositions[i * 3] - wallHit.x;
-          const wlY = lightPositions[i * 3 + 1] - wallHit.y;
-          const wlZ = lightPositions[i * 3 + 2] - wallHit.z;
-          const wlInvLen = 1 / Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
-          const wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+          let wallDiffuse;
+          if (lights[i].type === 'directional') {
+            // Directional lights are pure directions — distance must not leak in
+            wallDiffuse = Math.max(0, wallHit.nx * directionalDirs[i][0] + wallHit.ny * directionalDirs[i][1] + wallHit.nz * directionalDirs[i][2]);
+          } else {
+            const wlX = lightPositions[i * 3] - wallHit.x;
+            const wlY = lightPositions[i * 3 + 1] - wallHit.y;
+            const wlZ = lightPositions[i * 3 + 2] - wallHit.z;
+            const wlInvLen = 1 / Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
+            wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+          }
           wallLightR += lightColors[i * 3] * wallDiffuse * lightIntensities[i];
           wallLightG += lightColors[i * 3 + 1] * wallDiffuse * lightIntensities[i];
           wallLightB += lightColors[i * 3 + 2] * wallDiffuse * lightIntensities[i];
@@ -429,7 +435,7 @@ function sampleColorAt(dir: Float32Array) {
   return calculateLighting(dir[0] * r, dir[1] * r, dir[2] * r, dir[0], dir[1], dir[2], sphereColor[0], sphereColor[1], sphereColor[2]);
 }
 
-function pointerToLightAngles(x: number, y: number, dist: number) {
+function pointerToLightAngles(x: number, y: number, dist: number, backHemi = false) {
   const px = (2 * ((x + 0.5) / canvas.width) - 1) * cachedAspectTanFov;
   const py = -(2 * ((y + 0.5) / canvas.height) - 1) * cachedTanFov;
   const len = Math.sqrt(px * px + py * py + 1);
@@ -440,7 +446,9 @@ function pointerToLightAngles(x: number, y: number, dist: number) {
   let newDist = dist;
   if (disc >= 0) {
     const sqrtD = Math.sqrt(disc);
-    let t = (-b - sqrtD) / 2;
+    // Near root = camera-side hemisphere, far root = behind: keep the light
+    // on the hemisphere it was on when the drag started
+    let t = backHemi ? (-b + sqrtD) / 2 : (-b - sqrtD) / 2;
     if (t < 0) t = (-b + sqrtD) / 2;
     X = dx * t;
     Y = dy * t;
@@ -464,6 +472,19 @@ const sampleLayer = document.getElementById('sample-layer')!;
 const gizmoSvg = document.getElementById('gizmo')!;
 const inspector = document.getElementById('inspector')!;
 
+// Pull an off-canvas point back to the canvas edge ALONG its line toward the
+// canvas center — so edge-clamped markers sit exactly on their aim line
+function clampToCanvasAlongLine(px: number, py: number) {
+  const tx = canvas.width / 2, ty = canvas.height / 2;
+  const dx = tx - px, dy = ty - py;
+  let t = 0;
+  if (px < 0) t = Math.max(t, -px / dx);
+  else if (px > canvas.width) t = Math.max(t, (canvas.width - px) / dx);
+  if (py < 0) t = Math.max(t, -py / dy);
+  else if (py > canvas.height) t = Math.max(t, (canvas.height - py) / dy);
+  return { x: px + dx * t, y: py + dy * t };
+}
+
 // Is the sphere between the camera and this light?
 function isLightOccluded(i: number) {
   const lx = lightPositions[i * 3];
@@ -480,8 +501,7 @@ function updateLightMarkers() {
   for (let i = 0; i < 3; i++) {
     const screenPos = worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
     if (screenPos.z <= 0) continue;
-    const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
-    const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+    const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
     const normalizedScale = Math.max(0, Math.min(1, (8 - screenPos.z) / 7.5));
     const marker = document.createElement('div');
     marker.className = `marker light-marker${lights[i].type === 'directional' ? ' light-marker--directional' : ''}`;
@@ -510,20 +530,46 @@ function updateGizmo() {
   const i = selectedLight;
   const screenPos = worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
   if (screenPos.z <= 0) return;
-  const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
-  const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+  const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
   const NS = 'http://www.w3.org/2000/svg';
   const type = lights[i].type;
   if (type === 'directional' || type === 'spot') {
-    for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
-      const line = document.createElementNS(NS, 'line');
-      line.setAttribute('x1', cx.toFixed(1));
-      line.setAttribute('y1', cy.toFixed(1));
-      line.setAttribute('x2', (canvas.width / 2).toString());
-      line.setAttribute('y2', (canvas.height / 2).toString());
-      line.setAttribute('stroke-width', width);
-      line.setAttribute('class', cls);
-      gizmoSvg.appendChild(line);
+    // Aim line from the light to where its ray meets the sphere's surface.
+    // Sampled in 3D and split into visible / sphere-occluded portions.
+    const lx = lightPositions[i * 3], ly = lightPositions[i * 3 + 1], lz = lightPositions[i * 3 + 2];
+    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+    const s = state.sphereRadius / llen;
+    const ex = lx * s, ey = ly * s, ez = lz * s;
+    const N = 32;
+    let visD = '', hidD = '', pv = false, ph = false;
+    for (let k = 0; k <= N; k++) {
+      const t = k / N;
+      const wx = lx + (ex - lx) * t;
+      const wy = ly + (ey - ly) * t;
+      const wz = lz + (ez - lz) * t;
+      const vz = wz - state.cameraZ;
+      const dl = Math.sqrt(wx * wx + wy * wy + vz * vz) || 1;
+      const occ = intersectSphere(0, 0, state.cameraZ, wx / dl, wy / dl, vz / dl, state.sphereRadius);
+      const hidden = !!occ && occ.t < dl - 1e-2;
+      const p = worldToScreen(wx, wy, wz);
+      const pt = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
+      if (!hidden) { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
+      else { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
+    }
+    if (hidD) {
+      const hid = document.createElementNS(NS, 'path');
+      hid.setAttribute('d', hidD);
+      hid.setAttribute('class', 'gizmo-line--hidden');
+      gizmoSvg.appendChild(hid);
+    }
+    if (visD) {
+      for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', visD);
+        path.setAttribute('stroke-width', width);
+        path.setAttribute('class', cls);
+        gizmoSvg.appendChild(path);
+      }
     }
   }
   if (type === 'area' && state.lightSize > 0) {
@@ -536,53 +582,130 @@ function updateGizmo() {
     gizmoSvg.appendChild(circle);
   }
 
-  // Cross-sphere rotation gizmo: a small wireframe sphere around the marker.
-  // The equator ellipse scrubs yaw, the meridian ellipse scrubs pitch.
-  const R = 26;         // sphere silhouette radius
-  const SQUASH = 0.38;  // minor radius of the crossing ellipses
-
-  const silhouette = document.createElementNS(NS, 'circle');
-  silhouette.setAttribute('cx', cx.toFixed(1));
-  silhouette.setAttribute('cy', cy.toFixed(1));
-  silhouette.setAttribute('r', R.toString());
-  silhouette.setAttribute('class', 'gizmo-sphere');
-  gizmoSvg.appendChild(silhouette);
-
-  const rings = [
-    { axis: 'yaw', rx: R, ry: R * SQUASH },
-    { axis: 'pitch', rx: R * SQUASH, ry: R },
-  ] as const;
-  for (const ring of rings) {
-    for (const cls of ['gizmo-arc-casing', 'gizmo-arc']) {
-      const el = document.createElementNS(NS, 'ellipse');
-      el.setAttribute('cx', cx.toFixed(1));
-      el.setAttribute('cy', cy.toFixed(1));
-      el.setAttribute('rx', ring.rx.toFixed(1));
-      el.setAttribute('ry', ring.ry.toFixed(1));
-      el.setAttribute('class', cls);
-      gizmoSvg.appendChild(el);
-    }
-    // Arrowheads at the ring's vertices, pointing along the drag axis
-    const arrows = ring.axis === 'yaw'
-      ? [[cx - ring.rx - 1, cy, 180], [cx + ring.rx + 1, cy, 0]]
-      : [[cx, cy - ring.ry - 1, -90], [cx, cy + ring.ry + 1, 90]];
-    for (const [ax, ay, rot] of arrows) {
-      const head = document.createElementNS(NS, 'path');
-      head.setAttribute('d', 'M 1.5 0 L -5 -3 L -5 3 Z');
-      head.setAttribute('transform', `translate(${ax.toFixed(1)} ${ay.toFixed(1)}) rotate(${rot})`);
-      head.setAttribute('class', 'gizmo-arrow');
-      gizmoSvg.appendChild(head);
-    }
-    const hit = document.createElementNS(NS, 'ellipse');
-    hit.setAttribute('cx', cx.toFixed(1));
-    hit.setAttribute('cy', cy.toFixed(1));
-    hit.setAttribute('rx', ring.rx.toFixed(1));
-    hit.setAttribute('ry', ring.ry.toFixed(1));
-    hit.setAttribute('class', `gizmo-hit gizmo-hit--${ring.axis}`);
-    hit.dataset.handle = ring.axis;
-    gizmoSvg.appendChild(hit);
-  }
 }
+
+// ---------------------------------------------------------------- orbit globe
+// Arcball control in the inspector (after color-names-viz-over-time):
+// a tilted orthographic globe — meridian and parallel cross at the dot,
+// front halves bright, back halves dim. Drag anywhere on it to aim the light.
+
+const orbitEl = document.getElementById('orbit')!;
+const orbitDot = document.getElementById('orbit-dot')!;
+const orbitOut = document.getElementById('orbitOut')!;
+const arcMF = document.getElementById('arc-mf')!;
+const arcMB = document.getElementById('arc-mb')!;
+const arcPF = document.getElementById('arc-pf')!;
+const arcPB = document.getElementById('arc-pb')!;
+const SPH_R = 44, SPH_C = 50, TILT = 0.34;
+const CB = Math.cos(TILT), SB = Math.sin(TILT);
+
+// Unit-sphere point -> [viewBoxX, viewBoxY, depth]; globe +z faces the viewer,
+// which is scene -z (toward the camera), so aiming feels consistent.
+const proj3 = (x: number, y: number, z: number): [number, number, number] =>
+  [SPH_C + x * SPH_R, SPH_C - (y * CB - z * SB) * SPH_R, y * SB + z * CB];
+
+// Sample a ring fn(u)->[x,y,z], splitting into front / back subpaths by depth.
+// The exact horizon crossing (depth = 0) is interpolated so both halves meet
+// precisely on the globe's silhouette instead of at the nearest sample.
+function ringPath(fn: (u: number) => [number, number, number], N: number) {
+  let front = '', back = '', pf = false, pb = false;
+  let prev: { sx: number, sy: number, d: number } | null = null;
+  for (let i = 0; i <= N; i++) {
+    const [x, y, z] = fn(i / N);
+    const [sx, sy, d] = proj3(x, y, z);
+    if (prev && (d >= 0) !== (prev.d >= 0)) {
+      const t = prev.d / (prev.d - d);
+      const ix = prev.sx + (sx - prev.sx) * t;
+      const iy = prev.sy + (sy - prev.sy) * t;
+      const cpt = ix.toFixed(1) + ' ' + iy.toFixed(1) + ' ';
+      if (prev.d >= 0) {
+        front += (pf ? 'L' : 'M') + cpt;
+        back += 'M' + cpt;
+        pf = false; pb = true;
+      } else {
+        back += (pb ? 'L' : 'M') + cpt;
+        front += 'M' + cpt;
+        pb = false; pf = true;
+      }
+    }
+    const pt = sx.toFixed(1) + ' ' + sy.toFixed(1) + ' ';
+    if (d >= 0) { front += (pf ? 'L' : 'M') + pt; pf = true; pb = false; }
+    else { back += (pb ? 'L' : 'M') + pt; pb = true; pf = false; }
+    prev = { sx, sy, d };
+  }
+  return [front, back];
+}
+
+function updateOrbitGlobe() {
+  if (selectedLight < 0) return;
+  const l = lights[selectedLight];
+  const yaw = l.yaw * Math.PI / 180;
+  const pitch = l.pitch * Math.PI / 180;
+  const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+  const sinFi = Math.sin(pitch), cosFi = Math.cos(pitch);
+  const [mf, mb] = ringPath(u => {
+    const t = (u - 0.5) * Math.PI, c = Math.cos(t);
+    return [c * cosY, Math.sin(t), -c * sinY];
+  }, 48);
+  const [pf, pb] = ringPath(u => {
+    const s = u * 2 * Math.PI;
+    return [cosFi * Math.cos(s), sinFi, cosFi * Math.sin(s)];
+  }, 72);
+  arcMF.setAttribute('d', mf);
+  arcMB.setAttribute('d', mb);
+  arcPF.setAttribute('d', pf);
+  arcPB.setAttribute('d', pb);
+  const [dx, dy, depth] = proj3(cosFi * cosY, sinFi, -cosFi * sinY);
+  orbitDot.style.left = dx + '%';
+  orbitDot.style.top = dy + '%';
+  orbitDot.style.backgroundColor = l.hex;
+  // On the far hemisphere the dot drops behind the wireframe, greyed like the back arcs
+  orbitDot.classList.toggle('orbit-dot--back', depth < 0);
+  orbitOut.textContent = `${l.yaw}° / ${l.pitch}°`;
+}
+
+// Trackball dragging: relative to where the light was — pressing never jumps
+// the dot. Dragging spins the globe (one radius of movement = 90°), so the
+// back hemisphere is reached by simply continuing past the silhouette.
+// Note the trackball feel: while the dot is on the back it moves opposite
+// to the pointer, exactly like the far side of a spinning globe.
+const ORBIT_DEG_PER_RADIUS = 90;
+let orbiting = false;
+let orbitStart = { x: 0, y: 0, yaw: 0, pitch: 0 };
+
+orbitEl.addEventListener('pointerdown', e => {
+  if (selectedLight < 0) return;
+  orbiting = true;
+  orbitEl.setPointerCapture(e.pointerId);
+  const l = lights[selectedLight];
+  orbitStart = { x: e.clientX, y: e.clientY, yaw: l.yaw, pitch: l.pitch };
+});
+const wrap180 = (deg: number) => (((deg % 360) + 540) % 360) - 180;
+
+orbitEl.addEventListener('pointermove', e => {
+  if (!orbiting || selectedLight < 0) return;
+  const r = orbitEl.getBoundingClientRect();
+  const dxu = (e.clientX - orbitStart.x) / (r.width / 2);  // pointer delta in globe radii
+  const dyu = (orbitStart.y - e.clientY) / (r.height / 2);
+  const l = lights[selectedLight];
+  let yaw = orbitStart.yaw + dxu * ORBIT_DEG_PER_RADIUS;
+  // Pitch keeps going over the poles: crossing one flips yaw to the far side
+  let pitch = wrap180(orbitStart.pitch + dyu * ORBIT_DEG_PER_RADIUS);
+  if (pitch > 90) {
+    pitch = 180 - pitch;
+    yaw += 180;
+  } else if (pitch < -90) {
+    pitch = -180 - pitch;
+    yaw += 180;
+  }
+  l.yaw = Math.round(wrap180(yaw));
+  l.pitch = Math.round(Math.max(-89, Math.min(89, pitch)));
+  update();
+});
+orbitEl.addEventListener('pointerup', e => {
+  orbiting = false;
+  orbitEl.releasePointerCapture(e.pointerId);
+});
 
 function updateSampleMarker(sample: Sample) {
   const r = state.sphereRadius;
@@ -616,7 +739,9 @@ function openInspector(i: number) {
   inspAngle.value = l.angle.toString();
   inspAngleRow.hidden = l.type !== 'spot';
   inspDistRow.classList.toggle('field--inactive', l.type === 'directional');
+  inspDist.disabled = l.type === 'directional';
   syncOutputs();
+  updateOrbitGlobe();
   inspector.hidden = false;
   updateLightMarkers();
 }
@@ -755,6 +880,7 @@ function update() {
   if (selectedLight >= 0) {
     inspDist.value = lights[selectedLight].dist.toString();
     syncOutputs();
+    updateOrbitGlobe();
   }
   requestRender();
 }
@@ -811,6 +937,9 @@ function beginSampleDrag(event: PointerEvent, sample: Sample) {
 
 let draggedLight = -1;
 let dragMoved = false;
+let dragBackHemi = false;
+let dragCursorStart = { x: 0, y: 0 };
+let dragProjStart = { x: 0, y: 0 };
 
 lightLayer.addEventListener('pointerdown', e => {
   const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
@@ -818,6 +947,15 @@ lightLayer.addEventListener('pointerdown', e => {
   e.preventDefault();
   draggedLight = parseInt(markerEl.dataset.light, 10);
   dragMoved = false;
+  // Which orbit hemisphere is the light on right now? Preserve it while dragging.
+  const pz = lightPositions[draggedLight * 3 + 2];
+  const d0 = lights[draggedLight].dist;
+  dragBackHemi = d0 * d0 - pz * state.cameraZ >= 0;
+  // Relative drag: apply the cursor delta to the light's TRUE projected
+  // position, so an edge-clamped marker steers its off-canvas light remotely
+  dragCursorStart = eventToCanvasPixels(e.clientX, e.clientY, false);
+  const sp = worldToScreen(lightPositions[draggedLight * 3], lightPositions[draggedLight * 3 + 1], lightPositions[draggedLight * 3 + 2]);
+  dragProjStart = { x: sp.x, y: sp.y };
   const move = (ev: PointerEvent) => {
     dragMoved = true;
     dragLightTo(ev.clientX, ev.clientY);
@@ -839,9 +977,11 @@ lightLayer.addEventListener('pointerdown', e => {
 
 function dragLightTo(clientX: number, clientY: number) {
   if (draggedLight < 0) return;
-  const { x, y } = eventToCanvasPixels(clientX, clientY, false);
+  const p = eventToCanvasPixels(clientX, clientY, false);
+  const x = dragProjStart.x + (p.x - dragCursorStart.x);
+  const y = dragProjStart.y + (p.y - dragCursorStart.y);
   const l = lights[draggedLight];
-  const res = pointerToLightAngles(x, y, l.dist);
+  const res = pointerToLightAngles(x, y, l.dist, dragBackHemi);
   l.yaw = Math.round(res.yaw);
   l.pitch = Math.round(Math.max(-89, Math.min(89, res.pitch)));
   if (res.dist !== l.dist) {
@@ -850,38 +990,12 @@ function dragLightTo(clientX: number, clientY: number) {
   update();
 }
 
-// Axis-constrained scrubbing on the rotation arcs
-gizmoSvg.addEventListener('pointerdown', e => {
-  const axis = (e.target as SVGElement).dataset?.handle as 'yaw' | 'pitch' | undefined;
-  if (!axis || selectedLight < 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const l = lights[selectedLight];
-  const startX = e.clientX, startY = e.clientY;
-  const startYaw = l.yaw, startPitch = l.pitch;
-  const scale = canvas.width / canvas.getBoundingClientRect().width;
-  const move = (ev: PointerEvent) => {
-    if (axis === 'yaw') {
-      const yaw = startYaw + (ev.clientX - startX) * scale * 0.5;
-      l.yaw = Math.round(((yaw + 540) % 360) - 180); // wrap to [-180, 180]
-    } else {
-      l.pitch = Math.round(Math.max(-89, Math.min(89, startPitch - (ev.clientY - startY) * scale * 0.5)));
-    }
-    update();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-});
-
 lightLayer.addEventListener('wheel', e => {
   const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
   if (!markerEl || markerEl.dataset.light === undefined) return;
   e.preventDefault();
   const l = lights[parseInt(markerEl.dataset.light, 10)];
+  if (l.type === 'directional') return; // distance means nothing for a directional light
   l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(state.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
   update();
 }, { passive: false });

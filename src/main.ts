@@ -377,15 +377,17 @@ function calculateLighting(
       if (wallHit) {
         let wallLightR = 0, wallLightG = 0, wallLightB = 0;
         for (let i = 0; i < 3; i++) {
-          const lightX = lightPositions[i * 3];
-          const lightY = lightPositions[i * 3 + 1];
-          const lightZ = lightPositions[i * 3 + 2];
-          const wlX = lightX - wallHit.x;
-          const wlY = lightY - wallHit.y;
-          const wlZ = lightZ - wallHit.z;
-          const wlLen = Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
-          const wlInvLen = 1 / wlLen;
-          const wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+          let wallDiffuse;
+          if (lightTypes[i] === 'directional') {
+            // Directional lights are pure directions — distance must not leak in
+            wallDiffuse = Math.max(0, wallHit.nx * directionalDirs[i][0] + wallHit.ny * directionalDirs[i][1] + wallHit.nz * directionalDirs[i][2]);
+          } else {
+            const wlX = lightPositions[i * 3] - wallHit.x;
+            const wlY = lightPositions[i * 3 + 1] - wallHit.y;
+            const wlZ = lightPositions[i * 3 + 2] - wallHit.z;
+            const wlInvLen = 1 / Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
+            wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * wlInvLen);
+          }
           wallLightR += lightColors[i * 3] * wallDiffuse * lightIntensities[i];
           wallLightG += lightColors[i * 3 + 1] * wallDiffuse * lightIntensities[i];
           wallLightB += lightColors[i * 3 + 2] * wallDiffuse * lightIntensities[i];
@@ -422,6 +424,19 @@ function worldToScreen(pointX: number, pointY: number, pointZ: number) {
 
 let selectedLight = -1;
 
+// Pull an off-canvas point back to the canvas edge ALONG its line toward the
+// canvas center — so edge-clamped markers sit exactly on their aim line
+function clampToCanvasAlongLine(px: number, py: number) {
+  const tx = canvas.width / 2, ty = canvas.height / 2;
+  const dx = tx - px, dy = ty - py;
+  let t = 0;
+  if (px < 0) t = Math.max(t, -px / dx);
+  else if (px > canvas.width) t = Math.max(t, (canvas.width - px) / dx);
+  if (py < 0) t = Math.max(t, -py / dy);
+  else if (py > canvas.height) t = Math.max(t, (canvas.height - py) / dy);
+  return { x: px + dx * t, y: py + dy * t };
+}
+
 function updateLightMarkers() {
   const markersContainer = document.getElementById('light-markers');
   if (!markersContainer) return;
@@ -433,9 +448,9 @@ function updateLightMarkers() {
     const lz = lightPositions[i * 3 + 2];
     const screenPos = worldToScreen(lx, ly, lz);
     if (screenPos.z <= 0) continue;
-    // Keep offscreen lights grabbable by clamping them to the canvas edge
-    const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
-    const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+    // Keep offscreen lights grabbable by clamping them to the canvas edge,
+    // sliding along the aim line so the marker stays on it
+    const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
 
     // Calculate normalized scale based on Z distance (0 = far, 1 = near)
     // Using a reasonable range: 0.5 to 8 units from camera
@@ -489,22 +504,48 @@ function updateLightGizmo() {
     label.hidden = true;
     return;
   }
-  const cx = Math.max(0, Math.min(canvas.width, screenPos.x));
-  const cy = Math.max(0, Math.min(canvas.height, screenPos.y));
+  const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
   const type = lightTypes[i];
   const NS = 'http://www.w3.org/2000/svg';
 
-  // Directional and spot lights aim at the origin — draw the aim line
+  // Directional and spot lights aim at the origin — draw the aim line to
+  // where the ray meets the sphere's surface, splitting off the portion the
+  // sphere itself occludes (drawn as a faint trace)
   if (type === 'directional' || type === 'spot') {
-    for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
-      const line = document.createElementNS(NS, 'line');
-      line.setAttribute('x1', cx.toFixed(1));
-      line.setAttribute('y1', cy.toFixed(1));
-      line.setAttribute('x2', (canvas.width / 2).toString());
-      line.setAttribute('y2', (canvas.height / 2).toString());
-      line.setAttribute('stroke-width', width);
-      line.setAttribute('class', cls);
-      svg.appendChild(line);
+    const lx = lightPositions[i * 3], ly = lightPositions[i * 3 + 1], lz = lightPositions[i * 3 + 2];
+    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+    const s = sphereRadius / llen;
+    const ex = lx * s, ey = ly * s, ez = lz * s;
+    const N = 32;
+    let visD = '', hidD = '', pv = false, ph = false;
+    for (let k = 0; k <= N; k++) {
+      const t = k / N;
+      const wx = lx + (ex - lx) * t;
+      const wy = ly + (ey - ly) * t;
+      const wz = lz + (ez - lz) * t;
+      const vz = wz - cameraZ;
+      const dl = Math.sqrt(wx * wx + wy * wy + vz * vz) || 1;
+      const occ = intersectSphere(0, 0, cameraZ, wx / dl, wy / dl, vz / dl, sphereRadius);
+      const hidden = !!occ && occ.t < dl - 1e-2;
+      const p = worldToScreen(wx, wy, wz);
+      const pt = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
+      if (!hidden) { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
+      else { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
+    }
+    if (hidD) {
+      const hid = document.createElementNS(NS, 'path');
+      hid.setAttribute('d', hidD);
+      hid.setAttribute('class', 'gizmo-line--hidden');
+      svg.appendChild(hid);
+    }
+    if (visD) {
+      for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', visD);
+        path.setAttribute('stroke-width', width);
+        path.setAttribute('class', cls);
+        svg.appendChild(path);
+      }
     }
   }
 
@@ -752,7 +793,7 @@ function handleCanvasClick(event: MouseEvent) {
 // intersect the pixel ray with the orbit sphere. When the pointer is outside
 // the orbit's silhouette, GROW the orbit to reach it — dragging outward pulls
 // the light further away instead of pinning it to the old radius.
-function pointerToLightAngles(x: number, y: number, dist: number) {
+function pointerToLightAngles(x: number, y: number, dist: number, backHemi = false) {
   const px = (2 * ((x + 0.5) / canvas.width) - 1) * cachedAspectTanFov;
   const py = -(2 * ((y + 0.5) / canvas.height) - 1) * cachedTanFov;
   const len = Math.sqrt(px * px + py * py + 1);
@@ -763,7 +804,9 @@ function pointerToLightAngles(x: number, y: number, dist: number) {
   let newDist = dist;
   if (disc >= 0) {
     const sqrtD = Math.sqrt(disc);
-    let t = (-b - sqrtD) / 2;
+    // Near root = camera-side hemisphere, far root = behind: keep the light
+    // on the hemisphere it was on when the drag started
+    let t = backHemi ? (-b + sqrtD) / 2 : (-b - sqrtD) / 2;
     if (t < 0) t = (-b + sqrtD) / 2; // camera inside the orbit sphere
     X = dx * t;
     Y = dy * t;
@@ -783,14 +826,19 @@ function pointerToLightAngles(x: number, y: number, dist: number) {
 }
 
 let draggedLight = -1;
+let dragBackHemi = false;
+let dragCursorStart = { x: 0, y: 0 };
+let dragProjStart = { x: 0, y: 0 };
 
 function dragLightTo(clientX: number, clientY: number) {
   if (draggedLight < 0) return;
-  // No clamping: lights may be aimed well past the canvas edge
-  const { x, y } = eventToCanvasPixels(clientX, clientY, false);
+  // Relative drag: cursor delta applied to the light's true projected position
+  const p = eventToCanvasPixels(clientX, clientY, false);
+  const x = dragProjStart.x + (p.x - dragCursorStart.x);
+  const y = dragProjStart.y + (p.y - dragCursorStart.y);
   const distEl = document.getElementById(`light${draggedLight + 1}Dist`) as HTMLInputElement | null;
   const dist = distEl ? parseFloat(distEl.value) || 2 : 2;
-  const { yaw, pitch, dist: newDist } = pointerToLightAngles(x, y, dist);
+  const { yaw, pitch, dist: newDist } = pointerToLightAngles(x, y, dist, dragBackHemi);
   const yawEl = document.getElementById(`light${draggedLight + 1}Yaw`) as HTMLInputElement | null;
   const pitchEl = document.getElementById(`light${draggedLight + 1}Pitch`) as HTMLInputElement | null;
   if (yawEl) yawEl.value = Math.round(yaw).toString();
@@ -892,6 +940,7 @@ function updateScene() {
     if (angleWrap) angleWrap.hidden = lightTypes[i] !== 'spot';
     const distWrap = distEl ? distEl.closest('.control') : null;
     if (distWrap) distWrap.classList.toggle('control--inactive', lightTypes[i] === 'directional');
+    if (distEl) distEl.disabled = lightTypes[i] === 'directional';
   }
   // Refresh the camera/ray cache first, then re-light and reproject the
   // surface-anchored samples — they stay on their spot when the camera moves
@@ -944,6 +993,18 @@ if (lightMarkersEl) {
     e.preventDefault();
     selectedLight = parseInt(markerEl.dataset.light, 10);
     draggedLight = selectedLight;
+    // Which orbit hemisphere is the light on right now? Preserve it while dragging.
+    const pz = lightPositions[draggedLight * 3 + 2];
+    const distNow = Math.sqrt(
+      lightPositions[draggedLight * 3] ** 2 +
+      lightPositions[draggedLight * 3 + 1] ** 2 +
+      pz * pz
+    );
+    dragBackHemi = distNow * distNow - pz * cameraZ >= 0;
+    // Relative drag baseline: cursor + the light's true projected position
+    dragCursorStart = eventToCanvasPixels(e.clientX, e.clientY, false);
+    const sp = worldToScreen(lightPositions[draggedLight * 3], lightPositions[draggedLight * 3 + 1], lightPositions[draggedLight * 3 + 2]);
+    dragProjStart = { x: sp.x, y: sp.y };
     updateLightMarkers();
     const move = (ev: PointerEvent) => dragLightTo(ev.clientX, ev.clientY);
     const up = () => {
@@ -959,6 +1020,7 @@ if (lightMarkersEl) {
     if (!markerEl || markerEl.dataset.light === undefined) return;
     e.preventDefault();
     const i = parseInt(markerEl.dataset.light, 10);
+    if (lightTypes[i] === 'directional') return; // distance means nothing for a directional light
     const distEl = document.getElementById(`light${i + 1}Dist`) as HTMLInputElement | null;
     if (!distEl) return;
     distEl.value = (parseFloat(distEl.value) + (e.deltaY > 0 ? 0.1 : -0.1)).toFixed(2);
