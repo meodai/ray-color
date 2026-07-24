@@ -40,12 +40,16 @@ different angle.
 generate palettes headlessly, no canvas required. The whole engine is about
 **6 kB gzipped** (ESM + CJS) with **zero runtime dependencies**.
 
+Sampling colors is resolution-independent, so for palettes you can skip the
+dimensions entirely; pass `createEngine(width, height, scene, lights)` when
+you actually render pixels.
+
 ```ts
 import {
   createEngine, sampleCircleDirs, distributions, toSRGB8,
 } from 'ray-color';
 
-const engine = createEngine(400, 400,
+const engine = createEngine(
   {
     cameraZ: -9, fov: 30, sphereRadius: 1.2,
     sphereHex: '#ffffff', wallHex: '#999999',

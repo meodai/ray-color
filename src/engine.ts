@@ -63,6 +63,9 @@ export interface RGB { r: number; g: number; b: number; }
 
 export const MAX_LIGHT_DISTANCE = 12;
 export const DEFAULT_PASS_SCALES = [4, 2, 1];
+/** Fallback canvas size when createEngine is called without dimensions —
+ * palette sampling via shade() is resolution-independent anyway. */
+export const DEFAULT_ENGINE_SIZE = 400;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 // ---------------------------------------------------------------- color space
@@ -195,7 +198,16 @@ export interface Engine {
   tanFov(): number;
 }
 
-export function createEngine(width: number, height: number, scene: Scene, lights: Light[]): Engine {
+/** Palette-only form: resolution doesn't affect shade(), so it defaults. */
+export function createEngine(scene: Scene, lights: Light[]): Engine;
+export function createEngine(width: number, height: number, scene: Scene, lights: Light[]): Engine;
+export function createEngine(a: number | Scene, b: number | Light[], c?: Scene, d?: Light[]): Engine {
+  return typeof a === 'number'
+    ? createEngineSized(a, b as number, c!, d!)
+    : createEngineSized(DEFAULT_ENGINE_SIZE, DEFAULT_ENGINE_SIZE, a, b as Light[]);
+}
+
+function createEngineSized(width: number, height: number, scene: Scene, lights: Light[]): Engine {
   // The light COUNT is fixed at creation (mutate lights in place + commit();
   // create a new engine to add or remove lights)
   const lightCount = lights.length;

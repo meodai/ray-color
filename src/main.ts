@@ -1071,7 +1071,7 @@ function updateLibSnippet() {
   createEngine, toSRGB8${samplerImport}
 } from 'ray-color';
 
-const engine = createEngine(${canvas.width}, ${canvas.height},
+const engine = createEngine(
   ${wrapProps(state as unknown as Record<string, unknown>, '  ')},
   [
 ${lights.map(l => '    ' + wrapProps(l as unknown as Record<string, unknown>, '    ')).join(',\n')}
