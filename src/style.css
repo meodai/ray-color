@@ -562,6 +562,33 @@ body.colors-open.controls-open .l-main {
   color: color-mix(in lab, currentColor 55%, var(--bg));
 }
 
+/* Control-drawer items mirror the palette reveal: slide in from the
+   left (the drawer's travel direction), staggered top-down */
+.drawer-section > *,
+.l-overlay__body--controls > .drawer-hint {
+  opacity: 0;
+  transform: translateX(-4rem);
+  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1), opacity 0.2s linear;
+}
+
+body.controls-open .drawer-section > *,
+body.controls-open .l-overlay__body--controls > .drawer-hint {
+  opacity: 1;
+  transform: translateX(0);
+  transition-delay: calc(150ms + var(--j, 0) * 50ms);
+}
+
+.l-overlay__body--controls > .drawer-hint { --j: 0; }
+.drawer-section > :nth-child(1) { --j: 0; }
+.drawer-section > :nth-child(2) { --j: 1; }
+.drawer-section > :nth-child(3) { --j: 2; }
+.drawer-section > :nth-child(4) { --j: 3; }
+.drawer-section > :nth-child(5) { --j: 4; }
+.drawer-section > :nth-child(6) { --j: 5; }
+.drawer-section > :nth-child(7) { --j: 6; }
+.drawer-section > :nth-child(8) { --j: 7; }
+.drawer-section > :nth-child(9) { --j: 8; }
+
 .drawer-toggle--right {
   left: auto;
   right: calc(var(--s-square) * -1 + var(--s-line));
