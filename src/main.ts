@@ -651,11 +651,19 @@ canvas.addEventListener('pointerdown', e => {
   if (!hit) return;
   e.preventDefault();
   const start = new Float64Array([hit.nx, hit.ny, hit.nz]);
-  // a bare click (no drag) still yields a visible, sampleable circle;
-  // dragging or the radius grip can take rho anywhere afterwards
+  // a bare click (no drag) still yields a visible, sampleable shape —
+  // a circle of min radius, or a short eastward arc; dragging or the
+  // handles can take both anywhere afterwards
+  const MIN_ARC = 0.35;
+  const lineEnd = new Float64Array(start);
+  if (mode === 'line') {
+    const cA = Math.cos(MIN_ARC), sA = Math.sin(MIN_ARC);
+    lineEnd[0] = start[0] * cA + start[2] * sA;
+    lineEnd[2] = -start[0] * sA + start[2] * cA;
+  }
   shape = mode === 'line'
-    ? { kind: 'line', a: start, b: new Float64Array(start), rho: 0 }
-    : { kind: 'circle', a: start, b: new Float64Array(start), rho: 0.35 };
+    ? { kind: 'line', a: start, b: lineEnd, rho: 0 }
+    : { kind: 'circle', a: start, b: lineEnd, rho: MIN_ARC };
   let dragging = false;
   const move = (ev: PointerEvent) => {
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
