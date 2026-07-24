@@ -1001,12 +1001,16 @@ function readSceneInputs() {
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
-// Scene presets (shared with parity.html, where they're the test scenes)
+// Scene presets (shared with parity.html, where they're the test scenes).
+// The select shows a preset name only while the scene still IS that preset:
+// any manual edit funnels through update(), which snaps it back to None.
 const presetSelect = document.getElementById('scnPreset') as HTMLSelectElement;
+let applyingPreset = false;
 PRESETS.forEach((p, i) => presetSelect.add(new Option(p.name, String(i))));
 presetSelect.addEventListener('change', () => {
   const preset = PRESETS[parseInt(presetSelect.value, 10)];
   if (!preset) return;
+  applyingPreset = true;
   Object.assign(state, structuredClone(preset.scene));
   preset.lights.forEach((pl, i) => {
     if (i >= lights.length) return;
@@ -1035,6 +1039,7 @@ presetSelect.addEventListener('change', () => {
   update();
   updateLibSnippet();
   sound.playSuccess();
+  applyingPreset = false;
 });
 
 // Push state back into the scene controls (preset load). The single
@@ -1481,27 +1486,11 @@ function deleteSelectedSample() {
 
 // ---------------------------------------------------------------- update pipeline
 
-// Debounced settings snapshot in the console — copy the logged JSON to tune defaults
-let settingsLogTimer: number | undefined;
-function logSettings() {
-  clearTimeout(settingsLogTimer);
-  settingsLogTimer = window.setTimeout(() => {
-    const snapshot = {
-      scene: { ...state },
-      lights: lights.map(l => ({ ...l })),
-      mode,
-      shape: shape ? { kind: shape.kind, a: [...shape.a], b: [...shape.b], rho: shape.rho } : null,
-      shapeCount,
-      shapeSpacing,
-      samples: samples.map(s => [...s.dir]),
-    };
-    console.log('[ray-color settings]', JSON.stringify(snapshot, (_k, v) => typeof v === 'number' ? Math.round(v * 1000) / 1000 : v));
-  }, 400);
-}
-
 function update() {
   engine.commit();
-  logSettings();
+  // Any change that isn't a preset load means the scene is no longer that
+  // preset — snap the picker back to None
+  if (!applyingPreset && presetSelect.value !== '') presetSelect.value = '';
   samples.forEach(sample => {
     const color = engine.shade(sample.dir);
     sample.color[0] = color.r;
