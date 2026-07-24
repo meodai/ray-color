@@ -122,3 +122,9 @@ npm run build    # typecheck + bundle
 
 Not on npm yet — the engine lives in `src/engine.ts` and the playground
 (`src/main.ts`, `index.html`) is a thin consumer of its public API.
+
+## License
+
+[MIT](LICENSE) — except the sound effects in `public/sfx/`, which are
+commercial sounds purchased on itch.io and not covered by this license
+(see [public/sfx/README.md](public/sfx/README.md)).
