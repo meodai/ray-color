@@ -92,7 +92,41 @@ async function startRender() {
   if (!pendingRender) {
     engine.refineEdges(imageData.data);
     ctx!.putImageData(imageData, 0, 0);
+    scheduleFavicon();
   }
+}
+
+// Generative favicon: the rendered sphere itself, clipped to its silhouette.
+// Runs on idle time after a render settles so it never competes with drawing.
+const faviconLink = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
+const faviconCanvas = document.createElement('canvas');
+faviconCanvas.width = faviconCanvas.height = 64;
+let faviconQueued = 0;
+function scheduleFavicon() {
+  if (faviconQueued) return;
+  const run = () => {
+    faviconQueued = 0;
+    // exact perspective silhouette: apparent radius asin(r/d), projected
+    const d = -state.cameraZ;
+    const r = state.sphereRadius;
+    if (d <= r) return;
+    const rpx = (r / Math.sqrt(d * d - r * r)) / engine.tanFov() * (canvas.width / 2);
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const f = faviconCanvas.getContext('2d')!;
+    f.clearRect(0, 0, 64, 64);
+    f.save();
+    f.beginPath();
+    f.arc(32, 32, 31, 0, Math.PI * 2);
+    f.clip();
+    f.drawImage(canvas, cx - rpx, cy - rpx, rpx * 2, rpx * 2, 1, 1, 62, 62);
+    f.restore();
+    faviconLink.type = 'image/png';
+    faviconLink.href = faviconCanvas.toDataURL('image/png');
+  };
+  faviconQueued = typeof requestIdleCallback === 'function'
+    ? requestIdleCallback(run, { timeout: 2000 })
+    : window.setTimeout(run, 300);
 }
 
 let renderInProgress = false;
