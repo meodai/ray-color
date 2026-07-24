@@ -398,10 +398,10 @@ const shapeHandles = document.getElementById('shape-handles')!;
 // point spacing via the selected Distribution (linear / smoothstep)
 function shapeSampleDirs(): Float64Array[] {
   if (!shape) return [];
-  const spacing = distributions[shapeSpacing];
+  // circles always sample evenly (the API still accepts any Distribution)
   return shape.kind === 'line'
-    ? sampleLineDirs(shape.a, shape.b, shapeCount, spacing)
-    : sampleCircleDirs(shape.a, shape.rho, shapeCount, spacing);
+    ? sampleLineDirs(shape.a, shape.b, shapeCount, distributions[shapeSpacing])
+    : sampleCircleDirs(shape.a, shape.rho, shapeCount);
 }
 
 function recomputeShapeColors() {
@@ -700,7 +700,9 @@ function setMode(next: SampleMode) {
   mode = next;
   segButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.mode === mode));
   shapeCountWrap.hidden = mode === 'points';
-  spacingSeg.hidden = mode === 'points';
+  // spacing only matters for open shapes: on a closed circle smoothstep just
+  // bunches points at the seam, so the UI offers it for lines only
+  spacingSeg.hidden = mode !== 'line';
   sampleLayer.toggleAttribute('hidden', mode !== 'points');
   ensureModeDefaults();
   recomputeShapeColors();
@@ -1049,8 +1051,8 @@ function updateLibSnippet() {
   let samplerImport = '';
   let sampler: string;
   if (shape && mode === 'circle') {
-    samplerImport = ',\n  sampleCircleDirs, distributions';
-    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount},\n  distributions.${shapeSpacing}\n);`;
+    samplerImport = ',\n  sampleCircleDirs';
+    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}\n);`;
   } else if (shape && mode === 'line') {
     samplerImport = ',\n  sampleLineDirs, distributions';
     sampler = `const dirs = sampleLineDirs(\n  ${vec(shape.a)},\n  ${vec(shape.b)},\n  ${shapeCount}, distributions.${shapeSpacing}\n);`;
