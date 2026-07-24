@@ -14,11 +14,18 @@
   --dotSize: .75rem;
   --stops: transparent 0% 100%;
 
+  --s-line: 1px;
+  --s-square: 2rem;
+
+  interpolate-size: allow-keywords;
+
   background-color: var(--bg);
   color: var(--text);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  scrollbar-color: var(--text) var(--bg);
+  scrollbar-width: thin;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -49,60 +56,93 @@ body {
   outline-offset: 2px;
 }
 
-/* Top bar */
+/* Layout: centered halftone workspace panel (after OKPalette) */
 
-.bar {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.25rem 1.5rem;
-  position: relative;
-  z-index: 20;
-}
-
-.bar__title {
-  margin: 0;
-  font-size: 1.4rem;
-  font-weight: 200;
-  letter-spacing: -0.05em;
-}
-
-.bar__sub {
-  font-size: .8em;
-  color: color-mix(in lab, currentColor 60%, var(--bg));
-}
-
-.bar__actions {
+.l-wrap {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 1rem;
+  justify-content: center;
+  padding: 1.5rem 1rem 0.5rem;
+  overflow-x: clip;
 }
 
-.bar__link {
-  font-size: .8rem;
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
+.l-main {
+  position: relative;
+  width: min(92vw, 74vmin, 42rem);
+  transition: transform 0.5s cubic-bezier(0.3, 0.7, 0, 1);
+  background-color: color-mix(in lab, currentColor 45%, var(--bg));
+  background-image: radial-gradient(
+    circle at 50% 50%,
+    transparent 0% 35%,
+    var(--bg) 35% 100%
+  );
+  background-repeat: repeat;
+  background-size: 3px 3px;
 }
 
-.bar__link:hover {
-  text-decoration-thickness: 2px;
+/* Toolbar: cells attached above the workspace frame */
+
+.l-app__header {
+  position: relative;
+  z-index: 2;
+  /* plain background (no halftone) — but stop 1px short so the workspace
+     frame's top hairline stays visible across the whole width */
+  background: linear-gradient(var(--bg), var(--bg)) top / 100% calc(100% - var(--s-line)) no-repeat;
+  /* cells sit exactly ON the workspace frame: their bottom hairline
+     coincides with the body's top hairline */
+  margin-bottom: calc(var(--s-line) * -1);
+}
+
+.menu {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--s-square);
+}
+
+.menu > * + * {
+  margin-left: calc(var(--s-line) * -1);
+}
+
+/* Every menu cell is exactly one square tall */
+.menu .button {
+  height: var(--s-square);
+  padding-block: 0;
+}
+
+.menu__spacer {
+  flex: 1;
+  margin-left: 0;
+  pointer-events: none;
+}
+
+.menu__brand {
+  display: flex;
+  align-items: center;
+  padding: 0 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 200;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
 }
 
 .button {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
   font: inherit;
-  font-size: .8rem;
-  padding: .4rem .8rem;
-  border: 2px solid currentColor;
+  font-size: .7rem;
+  padding: .45rem .9rem;
+  border: var(--s-line) solid currentColor;
   background: var(--bg);
   color: inherit;
   cursor: pointer;
+  position: relative;
   transition: transform 0.15s ease, box-shadow 0.15s linear;
 }
 
 .button:hover {
+  z-index: 1;
   transform: translateY(-2px);
   box-shadow: 0 2px 0 0 currentColor;
 }
@@ -112,82 +152,157 @@ body {
   box-shadow: 0 0 0 0 currentColor;
 }
 
+.button.button--icon {
+  width: var(--s-square);
+  height: var(--s-square);
+  flex: 0 0 auto;
+  padding: 0;
+  align-items: center;
+  overflow-x: clip;
+  transition:
+    width 0.3s cubic-bezier(0.3, 0.7, 0, 1),
+    transform 0.15s cubic-bezier(0.3, 0.7, 0, 1),
+    box-shadow 0.15s linear;
+}
+
+.button__icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+  /* centers the icon inside the closed 2rem square (minus hairlines) */
+  margin-inline: calc((var(--s-square) - 2 * var(--s-line) - 1.05rem) / 2);
+  pointer-events: none;
+}
+
+.button--icon span {
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(2rem);
+  margin-right: 0.6rem;
+  transition: opacity 0.1s linear, transform 0.2s cubic-bezier(0.3, 0.7, 0, 1);
+}
+
+.button--icon:hover {
+  width: max-content;
+  width: calc-size(max-content, size);
+}
+
+.button--icon:hover span {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.4s ease, transform 0.2s cubic-bezier(0.3, 0.7, 0, 1);
+  transition-delay: 0.08s, 0.1s;
+}
+
+/* Cells at the right edge open leftward: icon stays right, label slides in */
+.button--end {
+  flex-direction: row-reverse;
+}
+
+.button--end span {
+  transform: translateX(-2rem);
+  margin-right: 0;
+  margin-left: 0.6rem;
+}
+
+.button--end:hover span {
+  transform: translateX(0);
+}
+
+.button--label {
+  cursor: default;
+}
+
+.button--label:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 /* Segmented mode control: Points | Line | Circle */
 
 .seg {
   display: flex;
 }
 
-.seg__btn {
-  border-right-width: 1px;
-  border-left-width: 1px;
-}
-
-.seg__btn:first-child {
-  border-left-width: 2px;
-}
-
-.seg__btn:last-child {
-  border-right-width: 2px;
+.seg .seg__btn + .seg__btn {
+  margin-left: calc(var(--s-line) * -1);
 }
 
 .seg__btn--active {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
-}
-
-.seg__btn:hover {
-  transform: none;
-  box-shadow: none;
+  z-index: 1;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 0 0 var(--text);
 }
 
 .seg--small .seg__btn {
-  font-size: .7rem;
-  padding: .3rem .5rem;
+  font-size: .65rem;
+  padding: .35rem .6rem;
 }
 
-.bar__count {
-  display: flex;
-  align-items: center;
-  gap: .4rem;
-  font-size: .75rem;
+.button--square {
+  width: var(--s-square);
+  padding: 0;
+  justify-content: center;
 }
 
-.bar__count input[type="range"] {
-  width: 6rem;
+/* Corner toggle at the rail's foot: opens/closes the palette drawer */
+.drawer-toggle {
+  position: absolute;
+  z-index: 2;
+  bottom: 0;
+  left: calc(var(--s-square) * -1 + var(--s-line));
 }
 
-.bar__count output {
+/* Mode cells: icon squares; only the active one expands to show its label */
+.seg .seg__btn.button--icon:hover {
+  width: var(--s-square);
+}
+
+.seg .seg__btn--active.button--icon,
+.seg .seg__btn--active.button--icon:hover {
+  width: max-content;
+  width: calc-size(max-content, size);
+}
+
+.seg .seg__btn--active.button--icon span {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+#shapeCountWrap {
+  height: var(--s-square);
+  padding: 0 0.6rem;
+}
+
+#shapeCountWrap input[type="range"] {
+  width: 5.5rem;
+  height: 1rem;
+}
+
+#shapeCountWrap output {
   font-weight: 700;
+  font-size: .7rem;
   min-width: 1.4ch;
   text-align: right;
 }
+/* Workspace body: inset hairline frame, canvas centered on the halftone */
 
-/* Stage */
-
-.stage {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 1rem;
+.l-body {
   position: relative;
-  padding: 1rem 1.5rem 2rem;
+  z-index: 1; /* opaque: hides the tucked palette panel except its rail */
+  aspect-ratio: 1;
+  padding: var(--s-square);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 var(--s-line) var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .viewport {
   position: relative;
-  width: min(72vmin, 560px);
-}
-
-/* The collected gradient peeks out 1rem behind the canvas on each side */
-.viewport::before {
-  content: '';
-  position: absolute;
-  inset: -1rem;
-  background: linear-gradient(90deg, var(--stops));
-  pointer-events: none;
+  width: 78%;
 }
 
 canvas {
@@ -195,7 +310,7 @@ canvas {
   z-index: 1;
   display: block;
   width: 100%;
-  border: 2px solid currentColor;
+  border: var(--s-line) solid var(--text);
   image-rendering: auto;
 }
 
@@ -300,18 +415,335 @@ canvas {
 
 .hints {
   margin: 0;
-  position: fixed;
-  left: 50%;
-  bottom: 1rem;
-  transform: translateX(-50%);
-  z-index: 15;
-  max-width: 96vw;
-  font-size: .7rem;
-  color: color-mix(in lab, currentColor 65%, var(--bg));
-  background: var(--bg);
-  padding: .2rem .7rem;
+  flex: 1;
+  min-width: 16rem;
+  font-size: .65rem;
+  color: color-mix(in lab, currentColor 55%, var(--bg));
   text-align: center;
 }
+
+/* Colors: left overlay panel tucked behind the workspace — a swatch rail
+   peeks out on the left and the panel slides open leftward to reveal
+   color names, hex values, and the export menu (after OKPalette) */
+
+.l-stage {
+  position: relative;
+}
+
+.l-overlay {
+  position: absolute;
+  z-index: 0; /* below the opaque body, above the page — rail stays clickable */
+  cursor: pointer;
+  top: 0;
+  /* the corner toggle occupies the bottom square of the rail column */
+  bottom: calc(var(--s-square) - var(--s-line));
+  left: calc(var(--s-square) * -1 + var(--s-line));
+  width: min(78%, 24rem);
+  border: var(--s-line) solid var(--text);
+  background: var(--bg);
+  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1), opacity 0.15s linear;
+}
+
+body.colors-open .l-overlay--left {
+  transform: translateX(calc(-100% + var(--s-square) + var(--s-line)));
+  cursor: default;
+}
+
+body.colors-open .l-overlay--left .palette__swatch {
+  cursor: pointer; /* the rail keeps acting as the toggle */
+}
+
+body.colors-open .l-main {
+  transform: translateX(calc(22% + var(--s-square)));
+}
+
+.l-overlay__body {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding-bottom: var(--s-square);
+}
+
+.l-overlay__footer {
+  position: absolute;
+  bottom: calc(var(--s-line) * -1);
+  left: calc(var(--s-line) * -1);
+  right: calc(var(--s-line) * -1);
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s linear 0.15s;
+}
+
+body.colors-open .l-overlay__footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.menu--export {
+  justify-content: flex-end;
+}
+
+/* Right drawer: scene + light controls, mirroring the colors overlay */
+
+.l-overlay--right {
+  left: auto;
+  right: calc(var(--s-square) * -1 + var(--s-line));
+}
+
+body.controls-open .l-overlay--right {
+  transform: translateX(calc(100% - var(--s-square) - var(--s-line)));
+  cursor: default;
+}
+
+body.controls-open .l-main {
+  transform: translateX(calc(-22% - var(--s-square)));
+}
+
+body.colors-open.controls-open .l-main {
+  transform: translateX(0);
+}
+
+.control-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: var(--s-square);
+  z-index: 1;
+  border-left: var(--s-line) solid var(--line);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.control-rail__light {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 0;
+  border-bottom: var(--s-line) solid var(--line);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.control-rail__light svg {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+
+.control-rail__light--active {
+  box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 3px var(--text);
+}
+
+.l-overlay__body--controls {
+  inset: 0 var(--s-square) 0 0;
+  padding: 0.9rem 1.1rem 1.5rem;
+}
+
+.drawer-section {
+  margin-bottom: 0.9rem;
+}
+
+.drawer-section + .drawer-section {
+  border-top: var(--s-line) solid var(--line);
+  padding-top: 0.9rem;
+}
+
+.drawer-hint {
+  margin: 0 0 0.9rem;
+  font-size: .65rem;
+  color: color-mix(in lab, currentColor 55%, var(--bg));
+}
+
+.drawer-toggle--right {
+  left: auto;
+  right: calc(var(--s-square) * -1 + var(--s-line));
+}
+
+/* Lib snippet: code that reproduces the current palette headlessly */
+
+/* The snippet slides in with the same motion as the palette rows,
+   arriving after the last row's reveal */
+.lib-snippet {
+  opacity: 0;
+  transform: translateX(4rem);
+  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1), opacity 0.2s linear;
+}
+
+body.colors-open .lib-snippet {
+  opacity: 1;
+  transform: translateX(0);
+  transition-delay: 290ms;
+}
+
+.lib-snippet__title {
+  padding: 1rem 0.9rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+.code {
+  display: block;
+  cursor: pointer;
+  margin: 0 0.9rem;
+  padding: 0.75rem;
+  background: var(--text);
+  color: var(--bg);
+  font: inherit;
+  font-size: 0.6rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.code ::selection,
+.code::selection {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Palette rows: swatch rail + name/hex info that reveals on open */
+
+.palette {
+  display: flex;
+  flex-direction: column;
+}
+
+.palette__row {
+  display: flex;
+  position: relative;
+  min-height: calc(var(--s-square) * 2);
+  background: var(--bg);
+  border-bottom: var(--s-line) solid var(--line);
+  cursor: pointer;
+  /* rows grow taller as the drawer opens, staggered top-down */
+  transition: min-height 0.3s cubic-bezier(0.3, 0.7, 0, 1);
+  transition-delay: calc(var(--i, 0) * 100ms);
+}
+
+body.colors-open .palette__row {
+  min-height: calc(var(--s-square) * 2.5);
+}
+
+.palette__row:hover {
+  z-index: 10;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 0 0 currentColor, 0 -1px 0 0 currentColor;
+}
+
+.palette__row--selected .palette__swatch {
+  box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 3px var(--text);
+}
+
+.palette__swatch {
+  width: calc(var(--s-square) * 2.5);
+  flex-shrink: 0;
+  border-right: var(--s-line) solid var(--line);
+  /* collapsed to half width while closed; grows open bottom-up staggered */
+  transform-origin: 0 50%;
+  transform: scaleX(0.5);
+}
+
+body.colors-open .palette__swatch {
+  transform: scaleX(1);
+  transition: transform 0.4s cubic-bezier(0.3, 0.7, 0, 1);
+  transition-delay: calc(150ms + (1 - var(--i, 0)) * 140ms);
+}
+
+.palette__row-info {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--s-square);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  opacity: 0;
+  transform: translateX(4rem);
+  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1), opacity 0.2s linear;
+}
+
+body.colors-open .palette__row-info {
+  opacity: 1;
+  transform: translateX(0);
+  transition-delay: calc(150ms + (1 - var(--i, 0)) * 140ms);
+}
+
+.palette__row-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.palette__row-name {
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  margin-bottom: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette__row-info-deco {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 1px;
+  background: var(--line);
+  opacity: 0.4;
+}
+
+.palette__row-hex {
+  font-size: .75rem;
+  font-weight: 300;
+  opacity: 0;
+  transform: translateX(4rem);
+}
+
+body.colors-open .palette__row-hex {
+  opacity: 1;
+  transform: translateX(0);
+  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1);
+  transition-delay: calc(150ms + (1 - var(--i, 0)) * 140ms + 100ms);
+}
+
+.palette__empty {
+  margin: 0;
+  padding: .6rem .75rem;
+  font-size: .65rem;
+  color: color-mix(in lab, currentColor 55%, var(--bg));
+}
+
+@keyframes token-beam-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+#tokenBeamBtn.is-connected .button__icon {
+  animation: token-beam-spin 5s linear infinite;
+  transform-origin: center;
+}
+
+/* Footer: brand + control hints */
+
+.footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  /* match the workspace panel's width */
+  width: min(92vw, 74vmin, 42rem);
+  margin: 0 auto;
+  padding: 0.75rem 0 1.25rem;
+}
+
+
 
 .gizmo-line-casing {
   fill: none;
@@ -470,7 +902,7 @@ canvas {
 /* Popovers */
 
 .popover {
-  border: 2px solid currentColor;
+  border: var(--s-line) solid currentColor;
   background: var(--bg);
   padding: .9rem 1.1rem 1.1rem;
   width: 14rem;
@@ -480,31 +912,6 @@ canvas {
   font-size: 1rem;
   font-weight: 200;
   letter-spacing: -0.03em;
-}
-
-/* Docked beside the viewport so it never covers the render */
-.popover--inspector {
-  position: absolute;
-  z-index: 10;
-  top: 0;
-  left: -1.25rem;
-  transform: translateX(-100%);
-}
-
-@media (max-width: 72rem) {
-  .popover--inspector {
-    position: fixed;
-    left: 1.5rem;
-    top: 4rem;
-    transform: none;
-  }
-}
-
-.popover--scene {
-  position: fixed;
-  top: 4rem;
-  right: 1.5rem;
-  z-index: 30;
 }
 
 .field {
@@ -588,7 +995,7 @@ input[type="color"] {
   width: 100%;
   height: 1.8rem;
   padding: 3px;
-  border: 2px solid currentColor;
+  border: var(--s-line) solid currentColor;
   background: var(--bg);
   cursor: pointer;
   transition: padding 0.15s ease;
@@ -615,7 +1022,7 @@ select {
   font-size: .8rem;
   width: 100%;
   padding: .25rem .35rem;
-  border: 2px solid currentColor;
+  border: var(--s-line) solid currentColor;
   border-radius: 0;
   background: var(--bg);
   color: inherit;
@@ -649,7 +1056,7 @@ select {
 }
 
 .light-type::picker(select) {
-  border: 2px solid currentColor;
+  border: var(--s-line) solid currentColor;
   background: var(--bg);
   color: inherit;
   padding: 0;
@@ -686,22 +1093,6 @@ select {
   height: .95rem;
   flex-shrink: 0;
   display: block;
-}
-
-@media (max-width: 40rem) {
-  .bar {
-    padding: 1rem;
-  }
-
-  .popover--inspector {
-    position: fixed;
-    left: 1rem;
-    right: 1rem;
-    top: auto;
-    bottom: 5.5rem;
-    width: auto;
-    transform: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,9 +1,12 @@
 // Ray Color playground — direct-manipulation demo for the ray-color engine.
 // State lives here; the engine renders it and answers all scene questions.
 
+import { SourceSession, createCollection } from 'token-beam';
+import { SoundManager } from './sound';
 import {
   createEngine,
   toSRGB8,
+  srgbToLinear,
   MAX_LIGHT_DISTANCE,
   DEFAULT_PASS_SCALES,
   slerp,
@@ -15,6 +18,10 @@ import {
   type Scene,
 } from './engine';
 
+const sound = new SoundManager();
+window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
+window.addEventListener('keydown', () => sound.unlock(), { capture: true });
+
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('Canvas 2D context unavailable');
@@ -22,10 +29,11 @@ const imageData = ctx.createImageData(canvas.width, canvas.height);
 
 // ---------------------------------------------------------------- state
 
+// Defaults tuned by hand in the app itself (from a [ray-color settings] log)
 const state: Scene = {
-  cameraZ: -4.5,
+  cameraZ: -9,
   fov: 30,
-  sphereRadius: 0.8,
+  sphereRadius: 1.2,
   sphereHex: '#ffffff',
   wallHex: '#999999',
   indirect: 0.3,
@@ -33,9 +41,9 @@ const state: Scene = {
 };
 
 const lights: Light[] = [
-  { type: 'directional', yaw: 45, pitch: 20, dist: 2, hex: '#ff0000', intensity: 0.6, angle: 30, size: 0.15 },
-  { type: 'directional', yaw: -135, pitch: 20, dist: 2, hex: '#00ff00', intensity: 0.6, angle: 30, size: 0.15 },
-  { type: 'directional', yaw: 0, pitch: 30, dist: 2, hex: '#0000ff', intensity: 0.6, angle: 30, size: 0.15 },
+  { type: 'directional', yaw: -150, pitch: 48, dist: 2, hex: '#ff0000', intensity: 0.95, angle: 30, size: 0.15 },
+  { type: 'directional', yaw: -125, pitch: -40, dist: 2, hex: '#fff700', intensity: 0.3, angle: 30, size: 0.4 },
+  { type: 'directional', yaw: -39, pitch: -35, dist: 2, hex: '#00ffb3', intensity: 0.2, angle: 30, size: 0.15 },
 ];
 
 const engine = createEngine(canvas.width, canvas.height, state, lights);
@@ -54,7 +62,7 @@ let selectedLight = -1;
 // Sampling mode: individual points, or one shape (geodesic line / circle)
 // drawn on the sphere that samples N colors along it
 type SampleMode = 'points' | 'line' | 'circle';
-let mode: SampleMode = 'points';
+let mode: SampleMode = 'circle';
 interface SurfaceShape {
   kind: 'line' | 'circle';
   a: Float64Array;   // line start / circle center (unit direction)
@@ -117,6 +125,24 @@ const sampleLayer = document.getElementById('sample-layer')!;
 const gizmoSvg = document.getElementById('gizmo')!;
 const inspector = document.getElementById('inspector')!;
 
+// Light-type icons (same drawings as the type select), injected into the
+// control rail; stroke/fill follow currentColor so they can be tinted
+const LIGHT_TYPE_ICONS: Record<string, string> = {
+  point: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
+  area: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 4.5l2.3-1.4M11.3 8h3.2M10.5 11.5l2.3 1.4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
+  directional: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M2 8h7M2 12h7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.5 2.4L14 4l-4.5 1.6zM9.5 6.4L14 8l-4.5 1.6zM9.5 10.4L14 12l-4.5 1.6z" fill="currentColor"/></svg>',
+  spot: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+};
+
+// Black or white, whichever contrasts better on the given color
+function contrastColor(hexColor: string) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hexColor);
+  if (!m) return '#000';
+  const [r, g, b] = [m[1], m[2], m[3]].map(c => srgbToLinear(parseInt(c, 16) / 255));
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.4 ? '#000' : '#fff';
+}
+
 // Pull an off-canvas point back to the canvas edge ALONG its line toward the
 // canvas center — so edge-clamped markers sit exactly on their aim line
 function clampToCanvasAlongLine(px: number, py: number) {
@@ -154,6 +180,15 @@ function updateLightMarkers() {
     marker.style.setProperty('--scale', normalizedScale.toString());
     lightLayer.appendChild(marker);
   }
+  document.querySelectorAll<HTMLElement>('.control-rail__light').forEach((el, i) => {
+    el.style.background = lights[i].hex;
+    el.style.color = contrastColor(lights[i].hex);
+    if (el.dataset.iconType !== lights[i].type) {
+      el.dataset.iconType = lights[i].type;
+      el.innerHTML = LIGHT_TYPE_ICONS[lights[i].type];
+    }
+    el.classList.toggle('control-rail__light--active', i === selectedLight);
+  });
   updateGizmo();
 }
 
@@ -314,6 +349,7 @@ const wrap180 = (deg: number) => (((deg % 360) + 540) % 360) - 180;
 
 orbitEl.addEventListener('pointermove', e => {
   if (!orbiting || selectedLight < 0) return;
+  sound.playTick();
   const r = orbitEl.getBoundingClientRect();
   const dxu = (e.clientX - orbitStart.x) / (r.width / 2);  // pointer delta in globe radii
   const dyu = (orbitStart.y - e.clientY) / (r.height / 2);
@@ -340,8 +376,12 @@ orbitEl.addEventListener('pointerup', e => {
 function updateSampleMarker(sample: Sample) {
   const r = state.sphereRadius;
   const screenPos = engine.worldToScreen(sample.dir[0] * r, sample.dir[1] * r, sample.dir[2] * r);
-  sample.marker.style.left = `${(screenPos.x / canvas.width) * 100}%`;
-  sample.marker.style.top = `${(screenPos.y / canvas.height) * 100}%`;
+  // Keep offscreen samples visible (and grabbable) at the canvas edge,
+  // clamped along their line to center — same treatment as light markers
+  const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
+  sample.marker.style.left = `${(cx / canvas.width) * 100}%`;
+  sample.marker.style.top = `${(cy / canvas.height) * 100}%`;
+  sample.marker.classList.toggle('marker--offscreen', cx !== screenPos.x || cy !== screenPos.y);
   const facing = r - sample.dir[2] * state.cameraZ;
   sample.marker.classList.toggle('marker--behind', facing >= 0);
 }
@@ -470,6 +510,7 @@ const clampDot = (d: number) => Math.max(-1, Math.min(1, d));
 // Editing: drag an endpoint, the circle's center, or the radius grip
 function beginHandleDrag(role: 'a' | 'b' | 'r') {
   const move = (ev: PointerEvent) => {
+    sound.playTick();
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
     const h = engine.castRay(q.x, q.y);
     if (!h || !shape) return;
@@ -576,17 +617,48 @@ const shapeCountOut = document.getElementById('shapeCountOut')!;
 const spacingSeg = document.getElementById('spacingSeg')!;
 const spacingButtons = Array.from(spacingSeg.querySelectorAll<HTMLButtonElement>('.seg__btn'));
 
+function normalize3(x: number, y: number, z: number) {
+  const l = Math.sqrt(x * x + y * y + z * z) || 1;
+  return new Float64Array([x / l, y / l, z / l]);
+}
+
+// Every mode starts populated, so switching always shows something to edit
+function ensureModeDefaults() {
+  if (mode === 'points') {
+    if (samples.length === 0) createSampleAt(new Float64Array([0, 0, -1]));
+  } else if (mode === 'circle') {
+    if (!shape || shape.kind !== 'circle') {
+      const center = new Float64Array([0, 0, -1]); // facing the camera
+      shape = { kind: 'circle', a: center, b: new Float64Array(center), rho: Math.asin(0.8) };
+    }
+  } else if (mode === 'line') {
+    if (!shape || shape.kind !== 'line') {
+      shape = {
+        kind: 'line',
+        a: normalize3(-0.6, 0.35, -0.75),
+        b: normalize3(0.6, -0.35, -0.75),
+        rho: 0,
+      };
+    }
+  }
+}
+
 function setMode(next: SampleMode) {
   mode = next;
   segButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.mode === mode));
   shapeCountWrap.hidden = mode === 'points';
   spacingSeg.hidden = mode === 'points';
   sampleLayer.toggleAttribute('hidden', mode !== 'points');
+  ensureModeDefaults();
+  recomputeShapeColors();
   updateShapeOverlay();
   updateStops();
 }
 
-segButtons.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode as SampleMode)));
+segButtons.forEach(b => b.addEventListener('click', () => {
+  sound.playTack();
+  setMode(b.dataset.mode as SampleMode);
+}));
 
 shapeCountInput.addEventListener('input', () => {
   shapeCount = Math.max(2, parseInt(shapeCountInput.value, 10) || 2);
@@ -617,6 +689,9 @@ const inspAngleRow = document.getElementById('inspAngleRow')!;
 const inspSizeRow = document.getElementById('inspSizeRow')!;
 
 function openInspector(i: number) {
+  sound.playTack();
+  setControlsOpen(true);
+  lightHint.hidden = true;
   selectedLight = i;
   const l = lights[i];
   inspTitle.textContent = `Light ${i + 1}`;
@@ -641,6 +716,7 @@ function openInspector(i: number) {
 function closeInspector() {
   selectedLight = -1;
   inspector.hidden = true;
+  lightHint.hidden = false;
   updateLightMarkers();
 }
 
@@ -682,8 +758,6 @@ inspSize.addEventListener('input', () => {
 
 // ---------------------------------------------------------------- scene popover
 
-const sceneBtn = document.getElementById('sceneBtn')!;
-const scenePopover = document.getElementById('scenePopover')!;
 const scn = {
   sphereColor: document.getElementById('scnSphereColor') as HTMLInputElement,
   wallColor: document.getElementById('scnWallColor') as HTMLInputElement,
@@ -692,11 +766,6 @@ const scn = {
   indirect: document.getElementById('scnIndirect') as HTMLInputElement,
   quality: document.getElementById('scnQuality') as HTMLInputElement,
 };
-
-sceneBtn.addEventListener('click', () => {
-  scenePopover.hidden = !scenePopover.hidden;
-  sceneBtn.setAttribute('aria-expanded', String(!scenePopover.hidden));
-});
 
 function readSceneInputs() {
   state.sphereHex = scn.sphereColor.value;
@@ -718,8 +787,339 @@ function syncOutputs() {
 
 // ---------------------------------------------------------------- gradient stops
 
-const copyBtn = document.getElementById('copyCss') as HTMLButtonElement;
+const colorOverlay = document.getElementById('colorOverlay')!;
+const drawerToggleBtn = document.getElementById('drawerToggleBtn')!;
+const paletteEl = document.getElementById('palette')!;
+
+drawerToggleBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  setColorsOpen(!colorsOpen());
+});
 let selectedSample: Sample | null = null;
+
+const hex6 = (c: ArrayLike<number>) =>
+  toSRGB8(c[0]).toString(16).padStart(2, '0') +
+  toSRGB8(c[1]).toString(16).padStart(2, '0') +
+  toSRGB8(c[2]).toString(16).padStart(2, '0');
+
+const colorsOpen = () => document.body.classList.contains('colors-open');
+
+function setColorsOpen(open: boolean) {
+  if (colorsOpen() !== open) sound.playToggle(open);
+  document.body.classList.toggle('colors-open', open);
+  if (open) requestColorNames();
+}
+
+// The sidebar itself is the toggle: click the closed rail to open; when open,
+// clicking the swatch rail (or empty panel space) closes it again. Row info
+// selects, and the export footer keeps its own actions.
+const controlOverlay = document.getElementById('controlOverlay')!;
+const controlsToggleBtn = document.getElementById('controlsToggleBtn')!;
+const lightHint = document.getElementById('lightHint')!;
+const controlsOpen = () => document.body.classList.contains('controls-open');
+
+function setControlsOpen(open: boolean) {
+  if (controlsOpen() !== open) sound.playToggle(open);
+  document.body.classList.toggle('controls-open', open);
+}
+
+controlsToggleBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  setControlsOpen(!controlsOpen());
+});
+
+controlOverlay.addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  const rail = t.closest('.control-rail__light') as HTMLElement | null;
+  if (rail) {
+    openInspector(parseInt(rail.dataset.railLight || '0', 10));
+    return;
+  }
+  if (!controlsOpen()) {
+    setControlsOpen(true);
+    return;
+  }
+  if (t.closest('.l-overlay__body--controls')) return;
+  setControlsOpen(false);
+});
+
+colorOverlay.addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  if (!colorsOpen()) {
+    setColorsOpen(true);
+    return;
+  }
+  if (t.closest('.l-overlay__footer') || t.closest('.palette__row-info') || t.closest('.lib-snippet')) return;
+  setColorsOpen(false);
+});
+
+// Clicking the snippet copies it
+const libSnippetTitle = document.querySelector('.lib-snippet__title')!;
+document.querySelector('.lib-snippet .code')!.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(libSnippetCode.textContent || '');
+    sound.playSuccess();
+    libSnippetTitle.textContent = 'Copied';
+  } catch {
+    libSnippetTitle.textContent = 'Copy failed';
+  }
+  setTimeout(() => { libSnippetTitle.textContent = 'Reproduce with ray-color'; }, 1200);
+});
+
+// Color names via api.color.pizza (debounced + abortable, cached per hex)
+const colorNameCache = new Map<string, string>();
+let nameTimer: number | undefined;
+let nameAbort: AbortController | null = null;
+
+function applyColorNames() {
+  document.querySelectorAll<HTMLElement>('.palette__row-name').forEach(el => {
+    const name = colorNameCache.get(el.dataset.hex || '');
+    if (name) el.textContent = name;
+  });
+}
+
+function requestColorNames() {
+  if (!colorsOpen()) return;
+  const missing = [...new Set(activeColors().map(hex6))].filter(h => !colorNameCache.has(h));
+  applyColorNames();
+  if (!missing.length) return;
+  clearTimeout(nameTimer);
+  nameAbort?.abort();
+  nameTimer = window.setTimeout(() => {
+    nameAbort = new AbortController();
+    fetch(`https://api.color.pizza/v1/?values=${missing.join(',')}&list=bestOf&noduplicates=true`, { signal: nameAbort.signal })
+      .then(r => r.json())
+      .then(data => {
+        for (const c of data.colors ?? []) {
+          colorNameCache.set(String(c.requestedHex).replace('#', '').toLowerCase(), c.name);
+        }
+        applyColorNames();
+      })
+      .catch(() => { /* offline or aborted — rows keep showing their hex */ });
+  }, 400);
+}
+
+// Living documentation: a snippet that reproduces the current palette
+// headlessly with the ray-color engine
+const libSnippetCode = document.getElementById('libSnippetCode')!;
+
+function updateLibSnippet() {
+  const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
+  const vec = (v: ArrayLike<number>) => `[${fmt(v[0])}, ${fmt(v[1])}, ${fmt(v[2])}]`;
+  const lit = (o: Record<string, unknown>) =>
+    '{ ' + Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? `'${v}'` : fmt(v as number)}`).join(', ') + ' }';
+
+  let samplerImport = '';
+  let sampler: string;
+  if (shape && mode === 'circle') {
+    samplerImport = ', sampleCircleDirs, distributions';
+    sampler = `const dirs = sampleCircleDirs(${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}, distributions.${shapeSpacing});`;
+  } else if (shape && mode === 'line') {
+    samplerImport = ', sampleLineDirs, distributions';
+    sampler = `const dirs = sampleLineDirs(${vec(shape.a)}, ${vec(shape.b)}, ${shapeCount}, distributions.${shapeSpacing});`;
+  } else {
+    sampler = `const dirs = [\n${samples.map(s => '  ' + vec(s.dir)).join(',\n')}\n];`;
+  }
+
+  libSnippetCode.textContent = `import { createEngine${samplerImport}, toSRGB8 } from 'ray-color';
+
+const engine = createEngine(400, 400,
+  ${lit(state as unknown as Record<string, unknown>)},
+  [
+${lights.map(l => '    ' + lit(l as unknown as Record<string, unknown>)).join(',\n')}
+  ]
+);
+engine.commit();
+
+${sampler}
+const palette = dirs.map(d => ({ ...engine.shade(d) })); // linear RGB
+const hex = palette.map(c => '#' + [c.r, c.g, c.b]
+  .map(v => toSRGB8(v).toString(16).padStart(2, '0')).join(''));`;
+}
+
+// The overlay lists the active palette: swatch rail + name/hex rows
+function renderPalette(colors: ArrayLike<number>[]) {
+  paletteEl.innerHTML = '';
+  if (colors.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'palette__empty';
+    empty.textContent = 'Click the sphere to sample colors.';
+    paletteEl.appendChild(empty);
+  }
+  colors.forEach((c, i) => {
+    const h = hex6(c);
+    const row = document.createElement('div');
+    row.className = 'palette__row';
+    row.style.setProperty('--i', String(i / colors.length)); // OKPalette's relI
+    row.addEventListener('mouseenter', () => sound.playTack());
+    if (mode === 'points' && samples[i] === selectedSample) row.classList.add('palette__row--selected');
+    const sw = document.createElement('div');
+    sw.className = 'palette__swatch';
+    sw.style.background = '#' + h;
+    const info = document.createElement('div');
+    info.className = 'palette__row-info';
+    const head = document.createElement('div');
+    head.className = 'palette__row-info-header';
+    const name = document.createElement('div');
+    name.className = 'palette__row-name';
+    name.dataset.hex = h;
+    name.textContent = colorNameCache.get(h) ?? '\u2026';
+    const deco = document.createElement('span');
+    deco.className = 'palette__row-info-deco';
+    const hexEl = document.createElement('div');
+    hexEl.className = 'palette__row-hex';
+    hexEl.textContent = '#' + h;
+    head.append(name, deco, hexEl);
+    info.appendChild(head);
+    row.append(sw, info);
+    if (mode === 'points') {
+      info.addEventListener('click', () => {
+        if (colorsOpen()) selectSample(samples[i]);
+      });
+    }
+    paletteEl.appendChild(row);
+  });
+  if (colorsOpen()) requestColorNames();
+}
+
+function paletteData() {
+  return activeColors().map(c => {
+    const h = hex6(c);
+    return { hex: '#' + h, name: colorNameCache.get(h) || '#' + h };
+  });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Token Beam: live-sync the palette to paired tools (as in OKPalette)
+const tokenBeamBtn = document.getElementById('tokenBeamBtn')!;
+const TOKEN_BEAM_SERVER_URL = 'wss://tokenbeam.dev';
+const ERROR_TOKEN_BEAM_LABEL = 'error beam';
+let tokenBeamClient: SourceSession | null = null;
+let tokenBeamSessionToken: string | null = null;
+let tokenBeamConnectedTargets = 0;
+
+const setTokenBeamLabel = (label: string) => {
+  const text = tokenBeamBtn.querySelector('span');
+  if (text) text.textContent = label;
+};
+
+const setTokenBeamConnectedState = (isConnected: boolean) => {
+  tokenBeamBtn.classList.toggle('is-connected', isConnected);
+};
+
+const buildTokenBeamPayload = () => {
+  const tokenEntries: Record<string, string> = {};
+  paletteData().forEach((color, index) => {
+    tokenEntries[`color/${String(index + 1).padStart(2, '0')}`] = color.hex;
+  });
+  return createCollection('RayColor', tokenEntries);
+};
+
+function syncPaletteToTokenBeam() {
+  if (!tokenBeamClient || activeColors().length === 0) return;
+  tokenBeamClient.sync(buildTokenBeamPayload());
+}
+
+const ensureTokenBeamSession = async () => {
+  if (tokenBeamClient) return true;
+  tokenBeamClient = new SourceSession({
+    serverUrl: TOKEN_BEAM_SERVER_URL,
+    clientType: 'web',
+    origin: 'RayColor',
+    icon: { type: 'unicode', value: '\u{1F526}' },
+  });
+  tokenBeamClient.on('paired', ({ sessionToken }: { sessionToken: string }) => {
+    tokenBeamSessionToken = sessionToken;
+    tokenBeamConnectedTargets = 0;
+    setTokenBeamConnectedState(false);
+    setTokenBeamLabel(sessionToken);
+  });
+  tokenBeamClient.on('peer-connected', () => {
+    tokenBeamConnectedTargets += 1;
+    setTokenBeamConnectedState(true);
+    syncPaletteToTokenBeam();
+  });
+  tokenBeamClient.on('peer-disconnected', () => {
+    tokenBeamConnectedTargets = Math.max(0, tokenBeamConnectedTargets - 1);
+    setTokenBeamConnectedState(tokenBeamConnectedTargets > 0);
+  });
+  tokenBeamClient.on('disconnected', () => {
+    tokenBeamConnectedTargets = 0;
+    setTokenBeamConnectedState(false);
+    setTokenBeamLabel(ERROR_TOKEN_BEAM_LABEL);
+  });
+  tokenBeamClient.on('warning', () => {});
+  tokenBeamClient.on('error', () => {
+    setTokenBeamConnectedState(false);
+    setTokenBeamLabel(ERROR_TOKEN_BEAM_LABEL);
+  });
+  try {
+    await tokenBeamClient.connect();
+    return true;
+  } catch (error) {
+    console.warn('Failed to connect to Token Beam:', error);
+    tokenBeamClient = null;
+    setTokenBeamConnectedState(false);
+    setTokenBeamLabel(ERROR_TOKEN_BEAM_LABEL);
+    return false;
+  }
+};
+
+ensureTokenBeamSession();
+
+tokenBeamBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  const isConnected = tokenBeamClient || (await ensureTokenBeamSession());
+  if (!isConnected) return;
+  if (tokenBeamSessionToken) {
+    navigator.clipboard.writeText(tokenBeamSessionToken).catch(() => {});
+    sound.playSuccess();
+    return;
+  }
+  setTokenBeamLabel(ERROR_TOKEN_BEAM_LABEL);
+});
+
+const copyPaletteBtn = document.getElementById('copyPaletteBtn')!;
+copyPaletteBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  const label = copyPaletteBtn.querySelector('span')!;
+  try {
+    await navigator.clipboard.writeText(paletteData().map(c => `${c.hex} | ${c.name}`).join('\n'));
+    sound.playSuccess();
+    label.textContent = 'Copied';
+  } catch {
+    label.textContent = 'Failed';
+  }
+  setTimeout(() => { label.textContent = 'Copy'; }, 1200);
+});
+
+document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e => {
+  e.stopPropagation();
+  const colors = paletteData();
+  if (!colors.length) return;
+  // Render + color strip below, like OKPalette's image export
+  const stripHeight = 80;
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height + stripHeight;
+  const octx = out.getContext('2d')!;
+  octx.drawImage(canvas, 0, 0);
+  const colorWidth = out.width / colors.length;
+  colors.forEach((c, i) => {
+    octx.fillStyle = c.hex;
+    octx.fillRect(i * colorWidth, canvas.height, colorWidth + 1, stripHeight);
+  });
+  sound.playSuccess();
+  out.toBlob(blob => { if (blob) downloadBlob(blob, 'ray-color-palette.png'); });
+});
 
 // The palette of the active mode: individual points, or the shape's samples
 function activeColors(): ArrayLike<number>[] {
@@ -738,38 +1138,52 @@ function cssStops(): string {
 }
 
 function updateStops() {
-  const has = activeColors().length > 0;
-  copyBtn.hidden = !has;
-  document.documentElement.style.setProperty('--stops', has ? cssStops() : 'transparent 0% 100%');
+  const colors = activeColors();
+  document.documentElement.style.setProperty('--stops', colors.length ? cssStops() : 'transparent 0% 100%');
+  renderPalette(colors);
+  updateLibSnippet();
+  syncPaletteToTokenBeam();
 }
 
 function selectSample(sample: Sample | null) {
   selectedSample = sample;
   samples.forEach(s => s.marker.classList.toggle('marker--selected', s === selectedSample));
+  document.querySelectorAll('.palette__row').forEach((row, i) =>
+    row.classList.toggle('palette__row--selected', mode === 'points' && samples[i] === selectedSample));
 }
 
 function deleteSelectedSample() {
   if (!selectedSample) return;
+  if (samples.length <= 1) return; // one point is the minimum
   selectedSample.marker.remove();
   samples = samples.filter(s => s !== selectedSample);
   selectedSample = null;
   updateStops();
 }
 
-copyBtn.addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(`linear-gradient(90deg, ${cssStops()})`);
-    copyBtn.textContent = 'Copied';
-  } catch {
-    copyBtn.textContent = 'Copy failed';
-  }
-  setTimeout(() => { copyBtn.textContent = 'Copy CSS'; }, 1200);
-});
-
 // ---------------------------------------------------------------- update pipeline
+
+// Debounced settings snapshot in the console — copy the logged JSON to tune defaults
+let settingsLogTimer: number | undefined;
+function logSettings() {
+  clearTimeout(settingsLogTimer);
+  settingsLogTimer = window.setTimeout(() => {
+    const snapshot = {
+      scene: { ...state },
+      lights: lights.map(l => ({ ...l })),
+      mode,
+      shape: shape ? { kind: shape.kind, a: [...shape.a], b: [...shape.b], rho: shape.rho } : null,
+      shapeCount,
+      shapeSpacing,
+      samples: samples.map(s => [...s.dir]),
+    };
+    console.log('[ray-color settings]', JSON.stringify(snapshot, (_k, v) => typeof v === 'number' ? Math.round(v * 1000) / 1000 : v));
+  }, 400);
+}
 
 function update() {
   engine.commit();
+  logSettings();
   samples.forEach(sample => {
     const color = engine.shade(sample.dir);
     sample.color[0] = color.r;
@@ -800,7 +1214,11 @@ canvas.addEventListener('click', event => {
   const { x, y } = eventToCanvasPixels(event.clientX, event.clientY);
   const hit = engine.castRay(x, y);
   if (!hit) return;
-  const dir = new Float64Array([hit.nx, hit.ny, hit.nz]);
+  createSampleAt(new Float64Array([hit.nx, hit.ny, hit.nz]));
+  sound.playTack();
+});
+
+function createSampleAt(dir: Float64Array) {
   const color = engine.shade(dir);
   const marker = document.createElement('div');
   marker.className = 'marker sample-marker';
@@ -811,13 +1229,14 @@ canvas.addEventListener('click', event => {
   samples.push(sample);
   selectSample(sample); // a fresh sample is the active one — backspace removes it
   updateStops();
-});
+}
 
 function beginSampleDrag(event: PointerEvent, sample: Sample) {
   event.preventDefault();
   event.stopPropagation();
   selectSample(sample);
   const move = (e: PointerEvent) => {
+    sound.playTick();
     const p = eventToCanvasPixels(e.clientX, e.clientY);
     const hit = engine.castRay(p.x, p.y);
     if (hit) {
@@ -882,6 +1301,7 @@ lightLayer.addEventListener('pointerdown', e => {
 
 function dragLightTo(clientX: number, clientY: number) {
   if (draggedLight < 0) return;
+  sound.playTick();
   const p = eventToCanvasPixels(clientX, clientY, false);
   const x = dragProjStart.x + (p.x - dragCursorStart.x);
   const y = dragProjStart.y + (p.y - dragCursorStart.y);
@@ -917,24 +1337,14 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeInspector();
     selectSample(null);
-    scenePopover.hidden = true;
-    sceneBtn.setAttribute('aria-expanded', 'false');
+    setColorsOpen(false);
+    setControlsOpen(false);
   } else if ((e.key === 'Backspace' || e.key === 'Delete') && !inField) {
     e.preventDefault();
     if (mode === 'points') deleteSelectedSample();
     else deleteShape();
   } else if ((e.key === '1' || e.key === '2' || e.key === '3') && !inField) {
     openInspector(parseInt(e.key, 10) - 1);
-  }
-});
-
-// Close the scene popover when clicking outside it
-document.addEventListener('pointerdown', e => {
-  if (scenePopover.hidden) return;
-  const t = e.target as HTMLElement;
-  if (!scenePopover.contains(t) && t !== sceneBtn && !sceneBtn.contains(t)) {
-    scenePopover.hidden = true;
-    sceneBtn.setAttribute('aria-expanded', 'false');
   }
 });
 
@@ -998,4 +1408,6 @@ playBtn.addEventListener('click', () => {
 // ---------------------------------------------------------------- boot
 
 syncOutputs();
+engine.commit();
+setMode(mode); // applies mode defaults AND the toolbar's mode-specific controls
 update();

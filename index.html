@@ -12,102 +12,174 @@
 </head>
 
 <body>
-  <header class="bar">
-    <h1 class="bar__title">Ray Color <span class="bar__sub">· playground</span></h1>
-    <nav class="bar__actions">
-      <div class="seg" role="group" aria-label="Sampling mode">
-        <button class="button seg__btn seg__btn--active" data-mode="points">Points</button>
-        <button class="button seg__btn" data-mode="line">Line</button>
-        <button class="button seg__btn" data-mode="circle">Circle</button>
-      </div>
-      <label class="bar__count" id="shapeCountWrap" hidden>
-        <input type="range" id="shapeCount" min="2" max="32" value="8" step="1">
-        <output id="shapeCountOut">8</output>
-      </label>
-      <div class="seg seg--small" id="spacingSeg" role="group" aria-label="Point spacing" hidden>
-        <button class="button seg__btn seg__btn--active" data-spacing="linear">Linear</button>
-        <button class="button seg__btn" data-spacing="smoothstep">Smooth</button>
-      </div>
-      <button class="button" id="copyCss" hidden>Copy CSS</button>
-      <button class="button" id="playBtn" title="Orbit the lights around the sphere" aria-pressed="false">&#9654;</button>
-      <button class="button" id="sceneBtn" aria-expanded="false">Scene</button>
-    </nav>
-  </header>
+  <main class="l-wrap">
+    <div class="l-main" id="app">
 
-  <main class="stage">
-    <div class="viewport" id="viewport">
-      <canvas id="canvas" width="400" height="400"></canvas>
-      <svg id="gizmo" aria-hidden="true"></svg>
-      <svg id="shape-svg" aria-hidden="true"></svg>
-      <div id="light-layer"></div>
-      <div id="sample-layer"></div>
-      <div id="shape-handles"></div>
+      <header class="l-app__header">
+        <div class="menu">
+          <div class="seg" role="group" aria-label="Sampling mode">
+            <button class="button button--icon seg__btn" data-mode="points" title="Points">
+              <svg class="button__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="5.2" r="1.7" fill="currentColor"/><circle cx="11.4" cy="4" r="1.7" fill="currentColor"/><circle cx="8.6" cy="11.6" r="1.7" fill="currentColor"/></svg>
+              <span>Points</span>
+            </button>
+            <button class="button button--icon seg__btn" data-mode="line" title="Line">
+              <svg class="button__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 12.3 Q 7 4.5 12.8 5.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="3.2" cy="12.3" r="1.7" fill="currentColor"/><circle cx="12.8" cy="5.8" r="1.7" fill="currentColor"/></svg>
+              <span>Line</span>
+            </button>
+            <button class="button button--icon seg__btn seg__btn--active" data-mode="circle" title="Circle">
+              <svg class="button__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="5.6" r="1.7" fill="currentColor"/></svg>
+              <span>Circle</span>
+            </button>
+          </div>
+          <label class="button button--label" id="shapeCountWrap" hidden>
+            <input type="range" id="shapeCount" min="2" max="32" value="8" step="1">
+            <output id="shapeCountOut">8</output>
+          </label>
+          <div class="seg seg--small" id="spacingSeg" role="group" aria-label="Point spacing" hidden>
+            <button class="button seg__btn seg__btn--active" data-spacing="linear">Linear</button>
+            <button class="button seg__btn" data-spacing="smoothstep">Smooth</button>
+          </div>
+          <span class="menu__spacer"></span>
+          <span class="menu__brand">Ray Color</span>
+          <button class="button button--square" id="playBtn" title="Orbit the lights around the sphere" aria-pressed="false">&#9654;</button>
+        </div>
+      </header>
 
-      <div class="popover popover--inspector" id="inspector" hidden>
-        <div class="popover__title" id="inspTitle">Light 1</div>
-        <div class="field field--orbit">
-          <span class="field__row"><label id="orbitLabel">Direction</label><output id="orbitOut"></output></span>
-          <div id="orbit" title="Drag to spin the light around the sphere" aria-labelledby="orbitLabel">
-            <svg viewBox="0 0 100 100" aria-hidden="true">
-              <path id="arc-pb" class="back"></path>
-              <path id="arc-mb" class="back"></path>
-              <path id="arc-pf" class="front"></path>
-              <path id="arc-mf" class="front"></path>
-            </svg>
-            <div id="orbit-dot"></div>
+      <div class="l-stage">
+      <div class="l-body">
+        <div class="viewport" id="viewport">
+          <canvas id="canvas" width="400" height="400"></canvas>
+          <svg id="gizmo" aria-hidden="true"></svg>
+          <svg id="shape-svg" aria-hidden="true"></svg>
+          <div id="light-layer"></div>
+          <div id="sample-layer"></div>
+          <div id="shape-handles"></div>
+
+        </div>
+      </div>
+
+      <button class="button button--icon drawer-toggle" id="drawerToggleBtn" title="Open the palette drawer" aria-controls="colorOverlay">
+        <svg class="button__icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 4V14M8 10L12 14L16 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M5 19H19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+        </svg>
+        <span>Colors</span>
+      </button>
+      <div class="l-overlay l-overlay--left" id="colorOverlay" aria-label="Sampled colors">
+        <div class="l-overlay__body">
+          <div class="palette" id="palette"></div>
+          <div class="lib-snippet">
+            <div class="popover__title lib-snippet__title">Reproduce with ray-color</div>
+            <pre class="code" title="Click to copy"><code id="libSnippetCode"></code></pre>
           </div>
         </div>
-        <div class="field">
-          <span class="field__row"><label for="inspType">Type</label></span>
-          <select id="inspType" class="light-type">
-            <button>
-              <selectedcontent></selectedcontent>
+        <div class="l-overlay__footer">
+          <div class="menu menu--end menu--export">
+            <button class="button button--icon" id="tokenBeamBtn" title="Token Beam — click to copy the pairing token">
+              <svg class="button__icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="6" cy="12" r="2.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle>
+                <path d="M8.5 12H15.5" stroke="currentColor" stroke-width="1.5"></path>
+                <circle cx="18" cy="12" r="2.5" stroke="currentColor" stroke-width="1.5"></circle>
+              </svg>
+              <span></span>
             </button>
-            <option value="point">
-              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
-              <span class="lt-name">Point light</span>
-            </option>
-            <option value="area">
-              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 4.5l2.3-1.4M11.3 8h3.2M10.5 11.5l2.3 1.4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
-              <span class="lt-name">Area light</span>
-            </option>
-            <option value="directional">
-              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M2 8h7M2 12h7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.5 2.4L14 4l-4.5 1.6zM9.5 6.4L14 8l-4.5 1.6zM9.5 10.4L14 12l-4.5 1.6z" fill="currentColor"/></svg>
-              <span class="lt-name">Directional</span>
-            </option>
-            <option value="spot">
-              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
-              <span class="lt-name">Spot light</span>
-            </option>
-          </select>
-        </div>
-        <div class="field field--color">
-          <span class="field__row"><label for="inspColor">Color</label></span>
-          <input type="color" id="inspColor">
-        </div>
-        <div class="field">
-          <span class="field__row"><label for="inspIntensity">Intensity</label><output id="inspIntensityOut"></output></span>
-          <input type="range" id="inspIntensity" min="0" max="1.25" step="0.05">
-        </div>
-        <div class="field" id="inspDistRow">
-          <span class="field__row"><label for="inspDist">Distance</label><output id="inspDistOut"></output></span>
-          <input type="range" id="inspDist" min="0.1" max="12" step="0.05">
-        </div>
-        <div class="field" id="inspSizeRow" hidden>
-          <span class="field__row"><label for="inspSize">Size</label><output id="inspSizeOut"></output></span>
-          <input type="range" id="inspSize" min="0" max="0.5" value="0.15" step="0.05">
-          <p class="field__help">Emitter radius: bigger softens shadows into wider penumbras.</p>
-        </div>
-        <div class="field" id="inspAngleRow" hidden>
-          <span class="field__row"><label for="inspAngle">Cone angle&deg;</label><output id="inspAngleOut"></output></span>
-          <input type="range" id="inspAngle" min="10" max="60" step="5">
+            <button class="button button--icon" id="copyPaletteBtn" title="Copy palette">
+              <svg class="button__icon" stroke-width="1.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="5" y="7" width="12" height="12" rx="1.8" stroke="currentColor" stroke-width="1.5"></rect>
+                <rect x="8" y="4" width="12" height="12" rx="1.8" stroke="currentColor" stroke-width="1.5" fill="var(--bg)"></rect>
+              </svg>
+              <span>Copy</span>
+            </button>
+            <button class="button button--end button--icon" id="downloadPaletteBtnPNG" title="Download render + palette PNG">
+              <svg class="button__icon" stroke-width="1.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 3H14L19 8V21H7V3Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="M14 3V8H19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+              <span>PNG</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-    <p class="hints">click sphere = sample &nbsp;·&nbsp; line / circle = drag to draw &nbsp;·&nbsp; drag points, handles &amp; lights &nbsp;·&nbsp; globe = aim &nbsp;·&nbsp; backspace = delete &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
-  </main>
+      </div>
 
-  <div class="popover popover--scene" id="scenePopover" hidden>
+      <button class="button button--icon button--end drawer-toggle drawer-toggle--right" id="controlsToggleBtn" title="Scene &amp; light controls" aria-controls="controlOverlay">
+        <svg class="button__icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 7H20M4 12H20M4 17H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+          <circle cx="9" cy="7" r="2" fill="var(--bg)" stroke="currentColor" stroke-width="1.5"></circle>
+          <circle cx="15" cy="12" r="2" fill="var(--bg)" stroke="currentColor" stroke-width="1.5"></circle>
+          <circle cx="7" cy="17" r="2" fill="var(--bg)" stroke="currentColor" stroke-width="1.5"></circle>
+        </svg>
+        <span>Scene</span>
+      </button>
+      <div class="l-overlay l-overlay--right" id="controlOverlay" aria-label="Scene and light controls">
+        <div class="control-rail" id="controlRail">
+          <button class="control-rail__light" data-rail-light="0" title="Light 1"></button>
+          <button class="control-rail__light" data-rail-light="1" title="Light 2"></button>
+          <button class="control-rail__light" data-rail-light="2" title="Light 3"></button>
+        </div>
+        <div class="l-overlay__body l-overlay__body--controls">
+          <section class="drawer-section" id="inspector" hidden>
+            <div class="popover__title" id="inspTitle">Light 1</div>
+            <div class="field field--orbit">
+              <span class="field__row"><label id="orbitLabel">Direction</label><output id="orbitOut"></output></span>
+              <div id="orbit" title="Drag to spin the light around the sphere" aria-labelledby="orbitLabel">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <path id="arc-pb" class="back"></path>
+                  <path id="arc-mb" class="back"></path>
+                  <path id="arc-pf" class="front"></path>
+                  <path id="arc-mf" class="front"></path>
+                </svg>
+                <div id="orbit-dot"></div>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field__row"><label for="inspType">Type</label></span>
+              <select id="inspType" class="light-type">
+                <button>
+                  <selectedcontent></selectedcontent>
+                </button>
+                <option value="point">
+                  <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+                  <span class="lt-name">Point light</span>
+                </option>
+                <option value="area">
+                  <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 4.5l2.3-1.4M11.3 8h3.2M10.5 11.5l2.3 1.4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+                  <span class="lt-name">Area light</span>
+                </option>
+                <option value="directional">
+                  <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M2 8h7M2 12h7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.5 2.4L14 4l-4.5 1.6zM9.5 6.4L14 8l-4.5 1.6zM9.5 10.4L14 12l-4.5 1.6z" fill="currentColor"/></svg>
+                  <span class="lt-name">Directional</span>
+                </option>
+                <option value="spot">
+                  <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+                  <span class="lt-name">Spot light</span>
+                </option>
+              </select>
+            </div>
+            <div class="field field--color">
+              <span class="field__row"><label for="inspColor">Color</label></span>
+              <input type="color" id="inspColor">
+            </div>
+            <div class="field">
+              <span class="field__row"><label for="inspIntensity">Intensity</label><output id="inspIntensityOut"></output></span>
+              <input type="range" id="inspIntensity" min="0" max="1.25" step="0.05">
+            </div>
+            <div class="field" id="inspDistRow">
+              <span class="field__row"><label for="inspDist">Distance</label><output id="inspDistOut"></output></span>
+              <input type="range" id="inspDist" min="0.1" max="12" step="0.05">
+            </div>
+            <div class="field" id="inspSizeRow" hidden>
+              <span class="field__row"><label for="inspSize">Size</label><output id="inspSizeOut"></output></span>
+              <input type="range" id="inspSize" min="0" max="0.5" value="0.15" step="0.05">
+              <p class="field__help">Emitter radius: bigger softens shadows into wider penumbras.</p>
+            </div>
+            <div class="field" id="inspAngleRow" hidden>
+              <span class="field__row"><label for="inspAngle">Cone angle&deg;</label><output id="inspAngleOut"></output></span>
+              <input type="range" id="inspAngle" min="10" max="60" step="5">
+            </div>
+          </section>
+          <p class="drawer-hint" id="lightHint">Click a light on the canvas &mdash; or press 1 2 3 &mdash; to edit it.</p>
+          <section class="drawer-section">
     <div class="popover__title">Scene</div>
     <div class="field field--color">
       <span class="field__row"><label for="scnSphereColor">Sphere color</label></span>
@@ -119,7 +191,7 @@
     </div>
     <div class="field">
       <span class="field__row"><label for="scnRadius">Sphere size</label><output id="scnRadiusOut"></output></span>
-      <input type="range" id="scnRadius" min="0.1" max="1.5" value="0.8" step="0.1">
+      <input type="range" id="scnRadius" min="0.1" max="1.5" value="1.2" step="0.1">
     </div>
     <div class="field">
       <span class="field__row"><label for="scnFov">FOV</label><output id="scnFovOut"></output></span>
@@ -134,7 +206,16 @@
       <input type="range" id="scnQuality" min="1" max="48" value="6" step="1">
       <p class="field__help">Shadow rays per area light: more give smoother soft shadows, but render slower.</p>
     </div>
-  </div>
+          </section>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p class="hints">click sphere = sample &nbsp;·&nbsp; line / circle = drag to draw &nbsp;·&nbsp; drag points, handles &amp; lights &nbsp;·&nbsp; globe = aim &nbsp;·&nbsp; backspace = delete &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
+  </footer>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
