@@ -682,6 +682,13 @@ body.colors-open.controls-open .l-main {
 .l-overlay__body--controls {
   inset: 0 var(--s-square) 0 0;
   padding: 0.9rem 1.1rem 1.5rem;
+  /* RTL trick: the scrollbar moves to the left edge, away from the rail;
+     children flip back to LTR so the content is unaffected */
+  direction: rtl;
+}
+
+.l-overlay__body--controls > * {
+  direction: ltr;
 }
 
 .drawer-section {
