@@ -29,14 +29,13 @@ const state: Scene = {
   sphereHex: '#ffffff',
   wallHex: '#999999',
   indirect: 0.3,
-  lightSize: 0.15,
   areaQuality: 6,
 };
 
 const lights: Light[] = [
-  { type: 'directional', yaw: 45, pitch: 20, dist: 2, hex: '#ff0000', intensity: 0.6, angle: 30 },
-  { type: 'directional', yaw: -135, pitch: 20, dist: 2, hex: '#00ff00', intensity: 0.6, angle: 30 },
-  { type: 'directional', yaw: 0, pitch: 30, dist: 2, hex: '#0000ff', intensity: 0.6, angle: 30 },
+  { type: 'directional', yaw: 45, pitch: 20, dist: 2, hex: '#ff0000', intensity: 0.6, angle: 30, size: 0.15 },
+  { type: 'directional', yaw: -135, pitch: 20, dist: 2, hex: '#00ff00', intensity: 0.6, angle: 30, size: 0.15 },
+  { type: 'directional', yaw: 0, pitch: 30, dist: 2, hex: '#0000ff', intensity: 0.6, angle: 30, size: 0.15 },
 ];
 
 const engine = createEngine(canvas.width, canvas.height, state, lights);
@@ -204,8 +203,8 @@ function updateGizmo() {
       }
     }
   }
-  if (type === 'area' && state.lightSize > 0) {
-    const r = (state.lightSize / (screenPos.z * engine.tanFov())) * (canvas.height / 2);
+  if (type === 'area' && lights[i].size > 0) {
+    const r = (lights[i].size / (screenPos.z * engine.tanFov())) * (canvas.height / 2);
     const circle = document.createElementNS(NS, 'circle');
     circle.setAttribute('cx', cx.toFixed(1));
     circle.setAttribute('cy', cy.toFixed(1));
@@ -612,8 +611,10 @@ const inspColor = document.getElementById('inspColor') as HTMLInputElement;
 const inspIntensity = document.getElementById('inspIntensity') as HTMLInputElement;
 const inspDist = document.getElementById('inspDist') as HTMLInputElement;
 const inspAngle = document.getElementById('inspAngle') as HTMLInputElement;
+const inspSize = document.getElementById('inspSize') as HTMLInputElement;
 const inspDistRow = document.getElementById('inspDistRow')!;
 const inspAngleRow = document.getElementById('inspAngleRow')!;
+const inspSizeRow = document.getElementById('inspSizeRow')!;
 
 function openInspector(i: number) {
   selectedLight = i;
@@ -626,7 +627,9 @@ function openInspector(i: number) {
   inspDist.max = MAX_LIGHT_DISTANCE.toString();
   inspDist.value = l.dist.toString();
   inspAngle.value = l.angle.toString();
+  inspSize.value = l.size.toString();
   inspAngleRow.hidden = l.type !== 'spot';
+  inspSizeRow.hidden = l.type !== 'area';
   inspDistRow.classList.toggle('field--inactive', l.type === 'directional');
   inspDist.disabled = l.type === 'directional';
   syncOutputs();
@@ -670,6 +673,12 @@ inspAngle.addEventListener('input', () => {
   syncOutputs();
   update();
 });
+inspSize.addEventListener('input', () => {
+  if (selectedLight < 0) return;
+  lights[selectedLight].size = parseFloat(inspSize.value);
+  syncOutputs();
+  update();
+});
 
 // ---------------------------------------------------------------- scene popover
 
@@ -681,7 +690,6 @@ const scn = {
   radius: document.getElementById('scnRadius') as HTMLInputElement,
   fov: document.getElementById('scnFov') as HTMLInputElement,
   indirect: document.getElementById('scnIndirect') as HTMLInputElement,
-  lightSize: document.getElementById('scnLightSize') as HTMLInputElement,
   quality: document.getElementById('scnQuality') as HTMLInputElement,
 };
 
@@ -696,7 +704,6 @@ function readSceneInputs() {
   state.sphereRadius = parseFloat(scn.radius.value);
   state.fov = parseFloat(scn.fov.value);
   state.indirect = parseFloat(scn.indirect.value);
-  state.lightSize = parseFloat(scn.lightSize.value);
   state.areaQuality = Math.max(1, parseInt(scn.quality.value, 10) || 1);
   update();
 }

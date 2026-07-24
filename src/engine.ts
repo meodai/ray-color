@@ -22,6 +22,7 @@ export interface Light {
   hex: string;    // sRGB hex, decoded to linear on commit()
   intensity: number;
   angle: number;  // spot cone, degrees
+  size: number;   // area emitter radius (world units); 0 = point-like
 }
 
 export interface Scene {
@@ -31,7 +32,6 @@ export interface Scene {
   sphereHex: string;
   wallHex: string;
   indirect: number;    // 0..1
-  lightSize: number;   // area light emitter radius (world units)
   areaQuality: number; // shadow samples per area light
 }
 
@@ -420,13 +420,13 @@ export function createEngine(width: number, height: number, scene: Scene, lights
           }
         }
       } else { // point / area
-        const shadowSamples = (lightType === 'area' && scene.lightSize > 0) ? scene.areaQuality : 1;
+        const shadowSamples = (lightType === 'area' && lights[i].size > 0) ? scene.areaQuality : 1;
         let accumR = 0, accumG = 0, accumB = 0;
         for (let s = 0; s < shadowSamples; s++) {
           let sampleX = lightX, sampleY = lightY, sampleZ = lightZ;
-          if (lightType === 'area' && scene.lightSize > 0) {
+          if (lightType === 'area' && lights[i].size > 0) {
             // Deterministic golden-angle spiral on the disk facing the target
-            const r = Math.sqrt((s + 0.5) / shadowSamples) * scene.lightSize;
+            const r = Math.sqrt((s + 0.5) / shadowSamples) * lights[i].size;
             const theta = s * GOLDEN_ANGLE;
             const ox = Math.cos(theta) * r;
             const oy = Math.sin(theta) * r;

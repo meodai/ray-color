@@ -533,6 +533,13 @@ canvas {
   font-size: .8em;
 }
 
+.field__help {
+  margin: .1rem 0 0;
+  font-size: .65rem;
+  line-height: 1.4;
+  color: color-mix(in lab, currentColor 55%, var(--bg));
+}
+
 /* Inputs */
 
 input[type="range"] {
