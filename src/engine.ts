@@ -177,6 +177,10 @@ export interface Engine {
   beginFrame(): void;
   /** Render one progressive pass into an RGBA buffer (width*height*4). */
   renderPass(out: Uint8ClampedArray, scale: number, skipStride?: number): void;
+  /** Anti-alias a finished full-res buffer: re-render only pixels that differ
+   * strongly from a neighbor (geometric edges) with a 2x2 sub-pixel grid,
+   * averaged in linear light. Returns the number of refined pixels. */
+  refineEdges(out: Uint8ClampedArray, threshold?: number): number;
   /** Cast the pixel ray against the sphere. Returns a SCRATCH hit — copy what you keep. */
   castRay(x: number, y: number): Hit | null;
   /** Lit color of the surface point a unit direction points at. Returns a SCRATCH — copy what you keep. */
@@ -752,6 +756,80 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     }
   }
 
+  // Shade an arbitrary (fractional-pixel) primary ray — the sub-pixel path
+  // used by refineEdges. No G-buffer: edge pixels are re-traced every time.
+  function shadeSubRay(px: number, py: number): RGB {
+    const rx = (2 * (px / width) - 1) * cachedAspectTanFov;
+    const ry = -(2 * (py / height) - 1) * cachedTanFov;
+    const len = Math.sqrt(rx * rx + ry * ry + 1);
+    const dirX = rx / len, dirY = ry / len, dirZ = 1 / len;
+    const sphereHit = intersectSphere(0, 0, scene.cameraZ, dirX, dirY, dirZ, scene.sphereRadius);
+    if (sphereHit) {
+      return calculateLighting(
+        sphereHit.nx * scene.sphereRadius, sphereHit.ny * scene.sphereRadius, sphereHit.nz * scene.sphereRadius,
+        sphereHit.nx, sphereHit.ny, sphereHit.nz,
+        sphereColor[0], sphereColor[1], sphereColor[2]);
+    }
+    const roomHit = intersectRoom(0, 0, scene.cameraZ, dirX, dirY, dirZ);
+    if (roomHit) {
+      return shadeWall(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, dirX, dirY, dirZ);
+    }
+    shadeScratch.r = 0; shadeScratch.g = 0; shadeScratch.b = 0;
+    return shadeScratch;
+  }
+
+  // Edge mask scratch for refineEdges (1 byte per pixel, reused per call)
+  const aaEdge = new Uint8Array(width * height);
+
+  function refineEdges(out: Uint8ClampedArray, threshold = 24) {
+    aaEdge.fill(0);
+    // Detect first, refine after — refining in place would shift the very
+    // contrasts the detection reads and cascade across the image
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        const pix = row + x;
+        const i = pix * 4;
+        if (x + 1 < width) {
+          const j = i + 4;
+          if (Math.abs(out[i] - out[j]) > threshold ||
+              Math.abs(out[i + 1] - out[j + 1]) > threshold ||
+              Math.abs(out[i + 2] - out[j + 2]) > threshold) {
+            aaEdge[pix] = 1;
+            aaEdge[pix + 1] = 1;
+          }
+        }
+        if (y + 1 < height) {
+          const j = i + width * 4;
+          if (Math.abs(out[i] - out[j]) > threshold ||
+              Math.abs(out[i + 1] - out[j + 1]) > threshold ||
+              Math.abs(out[i + 2] - out[j + 2]) > threshold) {
+            aaEdge[pix] = 1;
+            aaEdge[pix + width] = 1;
+          }
+        }
+      }
+    }
+    let refined = 0;
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if (!aaEdge[row + x]) continue;
+        let r = 0, g = 0, b = 0;
+        for (let s = 0; s < 4; s++) {
+          const c = shadeSubRay(x + 0.25 + (s & 1) * 0.5, y + 0.25 + (s >> 1) * 0.5);
+          r += c.r; g += c.g; b += c.b;
+        }
+        const i = (row + x) * 4;
+        out[i] = toSRGB8(r * 0.25);
+        out[i + 1] = toSRGB8(g * 0.25);
+        out[i + 2] = toSRGB8(b * 0.25);
+        refined++;
+      }
+    }
+    return refined;
+  }
+
   // ---------------------------------------------------------------- sampling & camera
 
   function castRay(x: number, y: number) {
@@ -826,6 +904,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     commit,
     beginFrame,
     renderPass,
+    refineEdges,
     castRay,
     shade,
     worldToScreen,

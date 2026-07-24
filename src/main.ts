@@ -25,7 +25,11 @@ window.addEventListener('keydown', () => sound.unlock(), { capture: true });
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('Canvas 2D context unavailable');
-const imageData = ctx.createImageData(canvas.width, canvas.height);
+// Backing store matches the displayed CSS size (1 rendered pixel = 1 CSS px),
+// so the render isn't upscaled. Kept in sync on resize below.
+const displaySize = () => Math.max(64, Math.round(canvas.clientWidth)) || 400;
+canvas.width = canvas.height = displaySize();
+let imageData = ctx.createImageData(canvas.width, canvas.height);
 
 // ---------------------------------------------------------------- state
 
@@ -47,8 +51,8 @@ const lights: Light[] = [
   { type: 'directional', yaw: -39, pitch: -35, dist: 2, hex: '#00ffb3', intensity: 0.2, angle: 30, size: 0.15 },
 ];
 
-const engine = createEngine(canvas.width, canvas.height, state, lights);
-const lightPositions = engine.lightPositions;
+let engine = createEngine(canvas.width, canvas.height, state, lights);
+let lightPositions = engine.lightPositions;
 
 interface Sample {
   // Float64 to match the renderer's precision exactly — float32 rounding
@@ -83,6 +87,11 @@ async function startRender() {
     engine.renderPass(imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
     ctx!.putImageData(imageData, 0, 0);
     await new Promise(requestAnimationFrame);
+  }
+  // Settled (no follow-up render queued): anti-alias the geometric edges
+  if (!pendingRender) {
+    engine.refineEdges(imageData.data);
+    ctx!.putImageData(imageData, 0, 0);
   }
 }
 
@@ -1062,7 +1071,7 @@ function updateLibSnippet() {
   createEngine, toSRGB8${samplerImport}
 } from 'ray-color';
 
-const engine = createEngine(400, 400,
+const engine = createEngine(${canvas.width}, ${canvas.height},
   ${wrapProps(state as unknown as Record<string, unknown>, '  ')},
   [
 ${lights.map(l => '    ' + wrapProps(l as unknown as Record<string, unknown>, '    ')).join(',\n')}
