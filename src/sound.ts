@@ -70,7 +70,6 @@ export class SoundManager {
   }
 
   playToggle(isOpening = true) {
-    // Play at slightly lower pitch when closing
     this.playBuffer('toggle', { pitch: isOpening ? 1.0 : 0.85, volume: 0.6 });
   }
 

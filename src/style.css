@@ -504,6 +504,19 @@ canvas {
   text-align: center;
 }
 
+.footer__links {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.footer__links a {
+  color: inherit;
+}
+
+.footer__links a:hover {
+  color: var(--text);
+}
+
 /* Colors: left overlay panel tucked behind the workspace — a swatch rail
    peeks out on the left and the panel slides open leftward to reveal
    color names, hex values, and the export menu (after OKPalette) */

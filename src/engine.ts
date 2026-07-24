@@ -514,7 +514,6 @@ export function createEngine(width: number, height: number, scene: Scene, lights
           if (tintR === 0 && tintG === 0 && tintB === 0) continue;
 
           if (lights[i].type === 'directional') {
-            // mirror the direction across the wall plane
             vDir[0] = directionalDirs[i][0];
             vDir[1] = directionalDirs[i][1];
             vDir[2] = directionalDirs[i][2];

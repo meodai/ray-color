@@ -467,7 +467,6 @@ function updateShapeOverlay() {
     }
   }
 
-  // Sample dots, filled with the color they sample
   const dirs = shapeSampleDirs();
   dirs.forEach((d, k) => {
     const p = projectDirPct(d);
@@ -962,7 +961,6 @@ colorOverlay.addEventListener('click', e => {
   setColorsOpen(false);
 });
 
-// Clicking the snippet copies it
 const libSnippetPre = document.querySelector('.lib-snippet .code')!;
 libSnippetPre.addEventListener('click', async () => {
   try {
