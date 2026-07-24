@@ -1572,6 +1572,23 @@ const rangeSyncs: Array<() => void> = [];
 
 enhanceRangeInputs();
 
+// The engine's buffers are sized at creation, so a layout change means a new
+// engine — same scene/lights refs, so nothing else needs rewiring
+let resizeTimer: number | undefined;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    const size = displaySize();
+    if (size === canvas.width) return;
+    canvas.width = canvas.height = size;
+    imageData = ctx!.createImageData(size, size);
+    engine = createEngine(size, size, state, lights);
+    lightPositions = engine.lightPositions;
+    update();
+    updateLibSnippet();
+  }, 150);
+});
+
 syncOutputs();
 engine.commit();
 setMode(mode); // applies mode defaults AND the toolbar's mode-specific controls
