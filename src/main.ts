@@ -17,6 +17,8 @@ import {
   type Light,
   type Scene,
 } from './engine';
+import { createGlPreview, type GlPreview } from './gl-preview';
+import { PRESETS } from './presets';
 
 const sound = new SoundManager();
 window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
@@ -53,6 +55,21 @@ const lights: Light[] = [
 
 let engine = createEngine(canvas.width, canvas.height, state, lights);
 let lightPositions = engine.lightPositions;
+
+// WebGL2 preview: instant f32 frames while interacting; the f64 CPU render
+// (the one palettes sample from, bit-for-bit) lands once interaction settles.
+// Null on machines without WebGL2 — everything falls back to CPU-only.
+let glPreview: GlPreview | null = createGlPreview(canvas.width, canvas.height);
+if (glPreview) {
+  glPreview.canvas.id = 'gl-canvas';
+  glPreview.canvas.setAttribute('aria-hidden', 'true');
+  canvas.insertAdjacentElement('afterend', glPreview.canvas);
+  glPreview.canvas.addEventListener('webglcontextlost', () => {
+    glPreview!.canvas.remove();
+    glPreview = null;
+    requestRender();
+  });
+}
 
 interface Sample {
   // Float64 to match the renderer's precision exactly — float32 rounding
@@ -129,8 +146,69 @@ function scheduleFavicon() {
 
 let renderInProgress = false;
 let pendingRender = false;
+let settleTimer: number | undefined;
+let renderGen = 0;
+const SETTLE_MS = 160;
 
-async function requestRender() {
+function requestRender() {
+  if (glPreview) {
+    // GPU frame now; full-precision CPU frame once edits stop coming
+    renderGen++;
+    glPreview.draw(state, lights);
+    if (!glPreview.canvas.classList.contains('gl-visible')) glPreview.canvas.classList.add('gl-visible');
+    clearTimeout(settleTimer);
+    settleTimer = window.setTimeout(cpuSettle, SETTLE_MS);
+    return;
+  }
+  cpuProgressiveRender();
+}
+
+// The settled CPU render skips the intermediate blits (the GL frame covers
+// the canvas until the final anti-aliased image is ready), so the progressive
+// ladder never flickers through — but still yields between passes.
+async function cpuSettle() {
+  if (renderInProgress) {
+    // A superseded settle may still be inside a blocking pass — try again
+    // rather than dropping the final render on the floor
+    settleTimer = window.setTimeout(cpuSettle, SETTLE_MS);
+    return;
+  }
+  renderInProgress = true;
+  const gen = renderGen;
+  engine.beginFrame();
+  let done = true;
+  for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
+    engine.renderPass(imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
+    await new Promise(requestAnimationFrame);
+    if (gen !== renderGen) { done = false; break; } // superseded mid-settle
+  }
+  if (done) {
+    engine.refineEdges(imageData.data);
+    ctx!.putImageData(imageData, 0, 0);
+    glPreview?.canvas.classList.remove('gl-visible');
+    scheduleFavicon();
+  }
+  renderInProgress = false;
+  // Superseded settles return without drawing; the timer set by the newer
+  // requestRender rebounds into cpuSettle once edits stop.
+}
+
+// Exports read #canvas, which can hold a stale frame while the GL preview
+// covers it. Force the settled f64 render synchronously — a one-off hitch on
+// click, in exchange for exports always being the exact CPU frame.
+function ensureSettledCanvas() {
+  if (!glPreview || !glPreview.canvas.classList.contains('gl-visible')) return;
+  clearTimeout(settleTimer);
+  renderGen++; // aborts any in-flight async settle without drawing
+  engine.beginFrame();
+  engine.renderPass(imageData.data, 1);
+  engine.refineEdges(imageData.data);
+  ctx!.putImageData(imageData, 0, 0);
+  glPreview.canvas.classList.remove('gl-visible');
+  scheduleFavicon();
+}
+
+async function cpuProgressiveRender() {
   if (renderInProgress) {
     pendingRender = true;
     return;
@@ -140,7 +218,7 @@ async function requestRender() {
   renderInProgress = false;
   if (pendingRender) {
     pendingRender = false;
-    requestRender();
+    cpuProgressiveRender();
   }
 }
 
@@ -923,6 +1001,41 @@ function readSceneInputs() {
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
+// Scene presets (shared with parity.html, where they're the test scenes)
+const presetSelect = document.getElementById('scnPreset') as HTMLSelectElement;
+PRESETS.forEach((p, i) => presetSelect.add(new Option(p.name, String(i))));
+presetSelect.addEventListener('change', () => {
+  const preset = PRESETS[parseInt(presetSelect.value, 10)];
+  if (!preset) return;
+  Object.assign(state, structuredClone(preset.scene));
+  preset.lights.forEach((pl, i) => {
+    if (i >= lights.length) return;
+    Object.assign(lights[i], structuredClone(pl));
+    // Presets are yaw/pitch/dist authored — a leftover cartesian position
+    // would override them on commit()
+    delete lights[i].position;
+  });
+  syncSceneInputs();
+  if (selectedLight >= 0) openInspector(selectedLight); // re-sync open inspector
+  update();
+  updateLibSnippet();
+  sound.playSuccess();
+});
+
+// Push state back into the scene controls (preset load). The single
+// reflectivity slider can't express per-wall values; it shows the strongest
+// wall and only flattens them if the user actually drags it.
+function syncSceneInputs() {
+  scn.sphereColor.value = state.sphereHex;
+  scn.wallColor.value = state.wallHex;
+  scn.radius.value = String(state.sphereRadius);
+  scn.fov.value = String(state.fov);
+  scn.indirect.value = String(state.indirect);
+  scn.reflect.value = String(Math.max(state.wallReflect.back, state.wallReflect.left, state.wallReflect.right, state.wallReflect.top, state.wallReflect.bottom));
+  scn.quality.value = String(state.areaQuality);
+  syncOutputs();
+}
+
 function syncOutputs() {
   document.querySelectorAll<HTMLOutputElement>('output').forEach(out => {
     const input = out.id ? document.getElementById(out.id.replace('Out', '')) as HTMLInputElement | null : null;
@@ -1295,6 +1408,7 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   e.stopPropagation();
   const colors = paletteData();
   if (!colors.length) return;
+  ensureSettledCanvas();
   // Render + color strip below, like OKPalette's image export
   const stripHeight = 80;
   const out = document.createElement('canvas');
@@ -1622,6 +1736,7 @@ window.addEventListener('resize', () => {
     imageData = ctx!.createImageData(size, size);
     engine = createEngine(size, size, state, lights);
     lightPositions = engine.lightPositions;
+    glPreview?.resize(size, size);
     update();
     updateLibSnippet();
   }, 150);

@@ -521,6 +521,12 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
         const rho = wrf[wall.key];
         if (rho <= 0) continue;
         const a = wall.axis;
+        // A wall never lights itself via its own mirror image. Without this
+        // guard, points ON the wall decide inclusion by the rounding of
+        // t = (wall.s - vHit[a]) / L[a] with a ±ulp numerator — luck that can
+        // fall either way per scene. Sphere points are never on a wall plane,
+        // so shade() (palette sampling) is unaffected.
+        if (Math.abs(vHit[a] - wall.s) < 1e-3) continue;
         for (let i = 0; i < lightCount; i++) {
           const intensity = lightIntensities[i];
           if (intensity <= 0) continue;

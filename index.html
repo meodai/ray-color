@@ -210,6 +210,13 @@
           <p class="drawer-hint" id="lightHint">Click a light on the canvas &mdash; or press 1 2 3 &mdash; to edit it.</p>
           <section class="drawer-section">
     <div class="popover__title">Scene</div>
+    <div class="field">
+      <span class="field__row"><label for="scnPreset">Preset</label></span>
+      <select id="scnPreset">
+        <option value="" selected>Load a scene&hellip;</option>
+      </select>
+      <p class="field__help">Complete lighting setups &mdash; a starting point, everything stays editable.</p>
+    </div>
     <div class="field field--color">
       <span class="field__row"><label for="scnSphereColor">Sphere color</label></span>
       <input type="color" id="scnSphereColor" value="#ffffff">

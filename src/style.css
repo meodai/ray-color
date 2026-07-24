@@ -394,6 +394,21 @@ canvas {
   image-rendering: auto;
 }
 
+/* WebGL2 preview overlay: covers #canvas exactly (same width/border rules
+   from the shared canvas selector above) while interacting; hidden once the
+   settled CPU render lands, so the frame at rest is always the f64 one. */
+#gl-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1; /* above #canvas via DOM order, below the z-index 2 overlays */
+  pointer-events: none;
+}
+
+#gl-canvas:not(.gl-visible) {
+  display: none;
+}
+
 #gizmo {
   position: absolute;
   inset: 0;

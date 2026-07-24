@@ -24,6 +24,14 @@ different angle.
 
 `npm run dev` starts the interactive demo:
 
+- **Realtime preview**: while you drag, frames come from a WebGL2 port of the
+  engine's shading (~0.1 ms/frame); the moment you stop, the f64 CPU render
+  lands, so the settled image — and everything you sample or export — keeps
+  the engine's bit-exactness guarantees. Falls back to CPU-only rendering
+  where WebGL2 is unavailable. `/parity.html` on the dev server verifies the
+  two renderers agree within ±1 per channel away from geometric edges.
+- **Presets**: complete lighting setups in the scene drawer — the same scenes
+  double as the parity test suite.
 - **Sample** by clicking the sphere, or drag a **line** / **circle** across it
   and sample N points along the shape (linear or smoothstep spacing).
 - **Drag everything**: lights, sample points, shape handles — dragging past
