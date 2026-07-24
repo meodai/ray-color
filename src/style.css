@@ -607,7 +607,8 @@ body.colors-open .l-main {
   position: absolute;
   bottom: calc(var(--s-line) * -1);
   left: calc(var(--s-line) * -1);
-  right: calc(var(--s-line) * -1);
+  /* flush with the corner-toggle column below, not the overlay border */
+  right: 0;
   z-index: 20;
   opacity: 0;
   pointer-events: none;
