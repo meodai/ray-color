@@ -651,9 +651,11 @@ canvas.addEventListener('pointerdown', e => {
   if (!hit) return;
   e.preventDefault();
   const start = new Float64Array([hit.nx, hit.ny, hit.nz]);
+  // a bare click (no drag) still yields a visible, sampleable circle;
+  // dragging or the radius grip can take rho anywhere afterwards
   shape = mode === 'line'
     ? { kind: 'line', a: start, b: new Float64Array(start), rho: 0 }
-    : { kind: 'circle', a: start, b: new Float64Array(start), rho: 0 };
+    : { kind: 'circle', a: start, b: new Float64Array(start), rho: 0.35 };
   const move = (ev: PointerEvent) => {
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
     const h2 = engine.castRay(q.x, q.y);
