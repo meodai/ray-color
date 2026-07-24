@@ -64,8 +64,6 @@ interface Sample {
 let samples: Sample[] = [];
 let selectedLight = -1;
 
-// Sampling mode: individual points, or one shape (geodesic line / circle)
-// drawn on the sphere that samples N colors along it
 type SampleMode = 'points' | 'line' | 'circle';
 let mode: SampleMode = 'circle';
 interface SurfaceShape {
@@ -178,7 +176,6 @@ const LIGHT_TYPE_ICONS: Record<string, string> = {
   spot: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
 };
 
-// Black or white, whichever contrasts better on the given color
 function contrastColor(hexColor: string) {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hexColor);
   if (!m) return '#000';
@@ -437,8 +434,6 @@ function updateSampleMarker(sample: Sample) {
 const shapeSvg = document.getElementById('shape-svg')!;
 const shapeHandles = document.getElementById('shape-handles')!;
 
-// The N unit directions the current shape samples — geometry from the engine,
-// point spacing via the selected Distribution (linear / smoothstep)
 function shapeSampleDirs(): Float64Array[] {
   if (!shape) return [];
   // circles always sample evenly (the API still accepts any Distribution)
@@ -523,7 +518,6 @@ function updateShapeOverlay() {
     shapeSvg.appendChild(dot);
   });
 
-  // Handles: line endpoints, or circle center + radius grip
   if (shape.kind === 'line') {
     for (const [role, dir, title] of [['a', shape.a, 'Line start'], ['b', shape.b, 'Line end']] as const) {
       const h = makeShapeHandle(role, `${title} — drag to move`);
@@ -593,7 +587,6 @@ function beginSurfaceDrag(e: PointerEvent, dir: Float64Array, onMove: () => void
   window.addEventListener('pointerup', up);
 }
 
-// Editing: drag an endpoint, the circle's center, or the radius grip
 function beginHandleDrag(e: PointerEvent, role: 'a' | 'b' | 'r') {
   if (!shape) return;
   if (role !== 'r') {
@@ -701,7 +694,6 @@ function deleteShape() {
   updateStops();
 }
 
-// Mode switching (segmented control) — sample markers only show in points mode
 const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.seg__btn[data-mode]'));
 const shapeCountWrap = document.getElementById('shapeCountWrap')!;
 const shapeCountInput = document.getElementById('shapeCount') as HTMLInputElement;
@@ -953,7 +945,6 @@ function setColorsOpen(open: boolean) {
   if (open) setControlsOpen(false); // one drawer at a time
   if (colorsOpen() !== open) sound.playToggle(open);
   if (!open) {
-    // tidy up on the way out: glide the palette list back to the top
     colorOverlay.querySelector('.l-overlay__body')?.scrollTo({ top: 0, behavior: 'smooth' });
   }
   document.body.classList.toggle('colors-open', open);
@@ -1122,7 +1113,6 @@ const hex = palette.map(c =>
     .padStart(2, '0')).join(''));`;
 }
 
-// The overlay lists the active palette: swatch rail + name/hex rows
 function renderPalette(colors: ArrayLike<number>[]) {
   paletteEl.innerHTML = '';
   if (colors.length === 0) {
@@ -1306,7 +1296,6 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   out.toBlob(blob => { if (blob) downloadBlob(blob, 'ray-color-palette.png'); });
 });
 
-// The palette of the active mode: individual points, or the shape's samples
 function activeColors(): ArrayLike<number>[] {
   return mode === 'points' ? samples.map(s => s.color) : shapeColors;
 }

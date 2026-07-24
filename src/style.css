@@ -104,7 +104,6 @@ body {
   margin-left: calc(var(--s-line) * -1);
 }
 
-/* Every menu cell is exactly one square tall */
 .menu .button {
   height: var(--s-square);
   padding-block: 0;
@@ -219,7 +218,6 @@ body {
   box-shadow: none;
 }
 
-/* Segmented mode control: Points | Line | Circle */
 
 .seg {
   display: flex;
@@ -384,7 +382,7 @@ body {
 
 .viewport {
   position: relative;
-  width: 100%; /* fills .l-body minus its --s-square padding */
+  width: 100%;
 }
 
 canvas {
@@ -436,7 +434,6 @@ canvas {
   stroke-linecap: round;
 }
 
-/* Portion of the shape on the far side of the sphere */
 .shape-path--back {
   stroke: rgba(255, 255, 255, 0.25);
   stroke-width: 1;
@@ -928,8 +925,6 @@ body.colors-open .palette__row-hex {
   transform-origin: center;
 }
 
-/* Footer: brand + control hints */
-
 .footer {
   display: flex;
   align-items: baseline;
@@ -957,7 +952,6 @@ body.colors-open .palette__row-hex {
   stroke-linecap: round;
 }
 
-/* Portion of the aim line hidden behind the sphere */
 .gizmo-line--hidden {
   fill: none;
   stroke: rgba(255, 255, 255, 0.25);
