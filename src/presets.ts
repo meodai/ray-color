@@ -78,17 +78,17 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Mirror box',
-    scene: { ...baseScene(), wallHex: '#bb8866', wallReflect: { back: 0.8, left: 0.5, right: 0, top: 0.25, bottom: 1 } },
+    // Hand-tuned in the playground (settings log): a full mirror room —
+    // every wall at reflectivity 1 — which is also the harshest CPU/GL
+    // parity case for mirrored-silhouette edges
+    scene: { ...baseScene(), wallHex: '#b39784', wallReflect: { back: 1, left: 1, right: 1, top: 1, bottom: 1 } },
     lights: [
-      // The first point light sits ABOVE the top wall (y > 2) on purpose:
-      // its mirror image lands inside the room, the self-mirror case the
-      // parity suite guards against
-      light({ type: 'point', yaw: 45, pitch: 45, dist: 3, hex: '#ffffff', intensity: 4.5 }),
-      light({ type: 'point', yaw: -140, pitch: -20, dist: 2.4, hex: '#00ffcc', intensity: 1.9 }),
-      light({ type: 'directional', yaw: 10, pitch: -60, hex: '#3355ff', intensity: 0.5 }),
+      light({ type: 'point', yaw: 45, pitch: 45, dist: 1.6, hex: '#ffffff', intensity: 4.5 }),
+      light({ type: 'point', yaw: -140, pitch: -20, dist: 2.4, hex: '#ff8800', intensity: 1.9 }),
+      light({ type: 'directional', yaw: 10, pitch: -60, hex: '#3355ff', intensity: 0.85 }),
     ],
-    // Ring around the teal hot spot: mint-seafoam-steel-turquoise
-    shape: { kind: 'circle', a: unit(-0.5, -0.15, -0.85), rho: Math.asin(0.55), count: 7 },
+    // Ring around the warm hot spot: salmon-sienna-plum-orchid-peach
+    shape: { kind: 'circle', a: unit(-0.5, -0.15, -0.85), rho: 0.582, count: 7 },
   },
   {
     name: 'Blue hour',
