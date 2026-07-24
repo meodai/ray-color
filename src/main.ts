@@ -514,14 +514,15 @@ const clampDot = (d: number) => Math.max(-1, Math.min(1, d));
 // motion inverts like the far side of a spinning globe.
 const SURFACE_DEG_PER_RADIUS = 90;
 function beginSurfaceDrag(e: PointerEvent, dir: Float64Array, onMove: () => void) {
-  const start = eventToCanvasPixels(e.clientX, e.clientY);
+  // unclamped: the rotation must keep going when the cursor leaves the canvas
+  const start = eventToCanvasPixels(e.clientX, e.clientY, false);
   const yaw0 = Math.atan2(dir[0], -dir[2]) * 180 / Math.PI;
   const pitch0 = Math.asin(clampDot(dir[1])) * 180 / Math.PI;
   // one silhouette-radius of pointer travel = 90° of rotation
   const silR = Math.max(1, engine.worldToScreen(state.sphereRadius, 0, 0).x - canvas.width / 2);
   const move = (ev: PointerEvent) => {
     sound.playTick();
-    const q = eventToCanvasPixels(ev.clientX, ev.clientY);
+    const q = eventToCanvasPixels(ev.clientX, ev.clientY, false);
     const dxu = (q.x - start.x) / silR;
     const dyu = (start.y - q.y) / silR;
     let yaw = yaw0 + dxu * SURFACE_DEG_PER_RADIUS;
