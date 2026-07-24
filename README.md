@@ -1,4 +1,4 @@
-# ray-color
+# Ray Color
 
 Generative color palettes from a raytraced scene — **edit the conditions, not the colors.**
 
