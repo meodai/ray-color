@@ -1,7 +1,6 @@
-// Scene presets — shared between the playground (settings drawer) and the
-// CPU/GL parity harness (parity.html), which uses them as its test scenes:
-// together they cover every light type, mirror walls, heavy indirect, high
-// area-sample counts and occlusion.
+// Scene presets for the playground's settings drawer — together they cover
+// every light type, mirror walls, heavy indirect, high area-sample counts
+// and occlusion.
 //
 // Apply with copies (structuredClone) — the engine mutates scene and lights.
 
@@ -78,9 +77,8 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Mirror box',
-    // Hand-tuned in the playground (settings log): a full mirror room —
-    // every wall at reflectivity 1 — which is also the harshest CPU/GL
-    // parity case for mirrored-silhouette edges
+    // Hand-tuned in the playground: a full mirror room, every wall at
+    // reflectivity 1
     scene: { ...baseScene(), wallHex: '#b39784', wallReflect: { back: 1, left: 1, right: 1, top: 1, bottom: 1 } },
     lights: [
       light({ type: 'point', yaw: 45, pitch: 45, dist: 1.6, hex: '#ffffff', intensity: 4.5 }),
@@ -103,9 +101,8 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Full house',
-    // Hand-tuned in the playground (settings log). The spot sits outside the
-    // mirrored right wall (x > 2), so its mirror image lands inside the room —
-    // the self-mirror case the parity suite guards against
+    // Hand-tuned in the playground. The spot sits outside the mirrored right
+    // wall (x > 2), so its mirror image lands inside the room
     scene: { ...baseScene(), areaQuality: 16, indirect: 0.7, fov: 45, sphereRadius: 1.5, cameraZ: -7, wallHex: '#778899', wallReflect: { back: 0.15, left: 0.15, right: 0.15, top: 0.15, bottom: 0.15 } },
     lights: [
       light({ type: 'area', yaw: -90, pitch: -3, dist: 2.6, hex: '#ffee88', intensity: 1.25, size: 0.2 }),

@@ -1001,8 +1001,7 @@ function readSceneInputs() {
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
-// Scene presets (shared with parity.html, where they're the test scenes).
-// The select shows a preset name only while the scene still IS that preset:
+// Scene presets. The select shows a preset name only while the scene still IS that preset:
 // any manual edit funnels through update(), which snaps it back to None.
 const presetSelect = document.getElementById('scnPreset') as HTMLSelectElement;
 let applyingPreset = false;

@@ -5,8 +5,7 @@
 // come from the f64 CPU engine (`shade()` / `renderPass()`), which keeps the
 // library's bit-exactness guarantees. The shader mirrors the CPU math in f32,
 // including the 4096-step sRGB LUT quantization, so frames agree with the CPU
-// render within ±1 per channel away from geometric/shadow edges (verified by
-// parity.html).
+// render within ±1 per channel away from geometric/shadow edges.
 //
 // Playground-only: not part of the published library build.
 
@@ -25,7 +24,7 @@ void main() {
 }`;
 
 // Every constant and branch below mirrors engine.ts — when editing one side,
-// edit the other and re-run parity.html.
+// edit the other and compare renders.
 const FRAG = `#version 300 es
 precision highp float;
 precision highp int;
