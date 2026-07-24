@@ -613,7 +613,9 @@ function deleteShape() {
 const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.seg__btn[data-mode]'));
 const shapeCountWrap = document.getElementById('shapeCountWrap')!;
 const shapeCountInput = document.getElementById('shapeCount') as HTMLInputElement;
-const shapeCountOut = document.getElementById('shapeCountOut')!;
+const shapeCountSlider = shapeCountWrap.querySelector('.numberslider') as HTMLElement;
+const shapeCountMinus = document.getElementById('shapeCountMinus')!;
+const shapeCountPlus = document.getElementById('shapeCountPlus')!;
 
 const spacingSeg = document.getElementById('spacingSeg')!;
 const spacingButtons = Array.from(spacingSeg.querySelectorAll<HTMLButtonElement>('.seg__btn'));
@@ -661,12 +663,46 @@ segButtons.forEach(b => b.addEventListener('click', () => {
   setMode(b.dataset.mode as SampleMode);
 }));
 
-shapeCountInput.addEventListener('input', () => {
-  shapeCount = Math.max(2, parseInt(shapeCountInput.value, 10) || 2);
-  shapeCountOut.textContent = shapeCountInput.value;
+// OKPalette-style numberslider: - / + steppers around a number input,
+// with a --relval fill on the pill while focused
+function syncShapeCountFill() {
+  const min = parseInt(shapeCountInput.min, 10) || 2;
+  const max = parseInt(shapeCountInput.max, 10) || 32;
+  shapeCountSlider.style.setProperty('--relval', String((shapeCount - min) / (max - min)));
+}
+
+function shapeCountChanged() {
+  syncShapeCountFill();
   recomputeShapeColors();
   updateShapeOverlay();
   updateStops();
+}
+
+function applyShapeCount(next: number) {
+  const min = parseInt(shapeCountInput.min, 10) || 2;
+  const max = parseInt(shapeCountInput.max, 10) || 32;
+  shapeCount = Math.min(max, Math.max(min, next));
+  shapeCountInput.value = String(shapeCount);
+  shapeCountChanged();
+}
+
+shapeCountInput.addEventListener('input', () => {
+  // while typing, track valid values without rewriting the field
+  const v = parseInt(shapeCountInput.value, 10);
+  if (Number.isNaN(v)) return;
+  shapeCount = Math.min(32, Math.max(2, v));
+  shapeCountChanged();
+});
+shapeCountInput.addEventListener('change', () => {
+  applyShapeCount(parseInt(shapeCountInput.value, 10) || shapeCount);
+});
+shapeCountMinus.addEventListener('click', () => {
+  sound.playTick();
+  applyShapeCount(shapeCount - 1);
+});
+shapeCountPlus.addEventListener('click', () => {
+  sound.playTick();
+  applyShapeCount(shapeCount + 1);
 });
 
 spacingButtons.forEach(b => b.addEventListener('click', () => {
