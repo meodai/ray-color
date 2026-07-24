@@ -38,6 +38,7 @@ const state: Scene = {
   wallHex: '#999999',
   indirect: 0.3,
   areaQuality: 6,
+  wallReflect: { back: 0, left: 0, right: 0, top: 0, bottom: 0 },
 };
 
 const lights: Light[] = [
@@ -609,7 +610,7 @@ function deleteShape() {
 }
 
 // Mode switching (segmented control) — sample markers only show in points mode
-const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.seg__btn'));
+const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.seg__btn[data-mode]'));
 const shapeCountWrap = document.getElementById('shapeCountWrap')!;
 const shapeCountInput = document.getElementById('shapeCount') as HTMLInputElement;
 const shapeCountOut = document.getElementById('shapeCountOut')!;
@@ -764,6 +765,7 @@ const scn = {
   radius: document.getElementById('scnRadius') as HTMLInputElement,
   fov: document.getElementById('scnFov') as HTMLInputElement,
   indirect: document.getElementById('scnIndirect') as HTMLInputElement,
+  reflect: document.getElementById('scnReflect') as HTMLInputElement,
   quality: document.getElementById('scnQuality') as HTMLInputElement,
 };
 
@@ -773,6 +775,12 @@ function readSceneInputs() {
   state.sphereRadius = parseFloat(scn.radius.value);
   state.fov = parseFloat(scn.fov.value);
   state.indirect = parseFloat(scn.indirect.value);
+  const rv = parseFloat(scn.reflect.value);
+  state.wallReflect.back = rv;
+  state.wallReflect.left = rv;
+  state.wallReflect.right = rv;
+  state.wallReflect.top = rv;
+  state.wallReflect.bottom = rv;
   state.areaQuality = Math.max(1, parseInt(scn.quality.value, 10) || 1);
   update();
 }
@@ -783,6 +791,7 @@ function syncOutputs() {
     const input = out.id ? document.getElementById(out.id.replace('Out', '')) as HTMLInputElement | null : null;
     if (input) out.textContent = input.value;
   });
+  rangeSyncs.forEach(sync => sync());
 }
 
 // ---------------------------------------------------------------- gradient stops
@@ -805,7 +814,12 @@ const hex6 = (c: ArrayLike<number>) =>
 const colorsOpen = () => document.body.classList.contains('colors-open');
 
 function setColorsOpen(open: boolean) {
+  if (open) setControlsOpen(false); // one drawer at a time
   if (colorsOpen() !== open) sound.playToggle(open);
+  if (!open) {
+    // tidy up on the way out: glide the palette list back to the top
+    colorOverlay.querySelector('.l-overlay__body')?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
   document.body.classList.toggle('colors-open', open);
   if (open) requestColorNames();
 }
@@ -819,6 +833,7 @@ const lightHint = document.getElementById('lightHint')!;
 const controlsOpen = () => document.body.classList.contains('controls-open');
 
 function setControlsOpen(open: boolean) {
+  if (open) setColorsOpen(false); // one drawer at a time
   if (controlsOpen() !== open) sound.playToggle(open);
   document.body.classList.toggle('controls-open', open);
 }
@@ -854,16 +869,14 @@ colorOverlay.addEventListener('click', e => {
 });
 
 // Clicking the snippet copies it
-const libSnippetTitle = document.querySelector('.lib-snippet__title')!;
-document.querySelector('.lib-snippet .code')!.addEventListener('click', async () => {
+const libSnippetPre = document.querySelector('.lib-snippet .code')!;
+libSnippetPre.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(libSnippetCode.textContent || '');
     sound.playSuccess();
-    libSnippetTitle.textContent = 'Copied';
-  } catch {
-    libSnippetTitle.textContent = 'Copy failed';
-  }
-  setTimeout(() => { libSnippetTitle.textContent = 'Reproduce with ray-color'; }, 1200);
+    libSnippetPre.classList.add('code--copied');
+    setTimeout(() => libSnippetPre.classList.remove('code--copied'), 1200);
+  } catch { /* clipboard unavailable */ }
 });
 
 // Color names via api.color.pizza (debounced + abortable, cached per hex)
@@ -906,35 +919,60 @@ const libSnippetCode = document.getElementById('libSnippetCode')!;
 function updateLibSnippet() {
   const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
   const vec = (v: ArrayLike<number>) => `[${fmt(v[0])}, ${fmt(v[1])}, ${fmt(v[2])}]`;
-  const lit = (o: Record<string, unknown>) =>
-    '{ ' + Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? `'${v}'` : fmt(v as number)}`).join(', ') + ' }';
+  // Wrap object literals onto short lines (recursively) so the block barely scrolls
+  const wrapProps = (o: Record<string, unknown>, indent: string, budget = 40): string => {
+    const inner = indent + '  ';
+    const parts = Object.entries(o).filter(([k]) => k !== 'position').map(([k, v]) => {
+      if (typeof v === 'string') return `${k}: '${v}'`;
+      if (typeof v === 'object' && v !== null) return `${k}: ${wrapProps(v as Record<string, unknown>, inner, budget)}`;
+      return `${k}: ${fmt(v as number)}`;
+    });
+    const lines: string[] = [];
+    let cur = '';
+    for (const p of parts) {
+      if (p.includes('\n')) {
+        if (cur) { lines.push(cur); cur = ''; }
+        lines.push(p);
+        continue;
+      }
+      if (cur && (cur + ', ' + p).length > budget) { lines.push(cur); cur = p; }
+      else cur = cur ? cur + ', ' + p : p;
+    }
+    if (cur) lines.push(cur);
+    return '{\n' + inner + lines.join(',\n' + inner) + '\n' + indent + '}';
+  };
 
   let samplerImport = '';
   let sampler: string;
   if (shape && mode === 'circle') {
-    samplerImport = ', sampleCircleDirs, distributions';
-    sampler = `const dirs = sampleCircleDirs(${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}, distributions.${shapeSpacing});`;
+    samplerImport = ',\n  sampleCircleDirs, distributions';
+    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount},\n  distributions.${shapeSpacing}\n);`;
   } else if (shape && mode === 'line') {
-    samplerImport = ', sampleLineDirs, distributions';
-    sampler = `const dirs = sampleLineDirs(${vec(shape.a)}, ${vec(shape.b)}, ${shapeCount}, distributions.${shapeSpacing});`;
+    samplerImport = ',\n  sampleLineDirs, distributions';
+    sampler = `const dirs = sampleLineDirs(\n  ${vec(shape.a)},\n  ${vec(shape.b)},\n  ${shapeCount}, distributions.${shapeSpacing}\n);`;
   } else {
     sampler = `const dirs = [\n${samples.map(s => '  ' + vec(s.dir)).join(',\n')}\n];`;
   }
 
-  libSnippetCode.textContent = `import { createEngine${samplerImport}, toSRGB8 } from 'ray-color';
+  libSnippetCode.textContent = `import {
+  createEngine, toSRGB8${samplerImport}
+} from 'ray-color';
 
 const engine = createEngine(400, 400,
-  ${lit(state as unknown as Record<string, unknown>)},
+  ${wrapProps(state as unknown as Record<string, unknown>, '  ')},
   [
-${lights.map(l => '    ' + lit(l as unknown as Record<string, unknown>)).join(',\n')}
+${lights.map(l => '    ' + wrapProps(l as unknown as Record<string, unknown>, '    ')).join(',\n')}
   ]
 );
 engine.commit();
 
 ${sampler}
-const palette = dirs.map(d => ({ ...engine.shade(d) })); // linear RGB
-const hex = palette.map(c => '#' + [c.r, c.g, c.b]
-  .map(v => toSRGB8(v).toString(16).padStart(2, '0')).join(''));`;
+const palette = dirs.map(d =>
+  ({ ...engine.shade(d) })); // linear RGB
+const hex = palette.map(c =>
+  '#' + [c.r, c.g, c.b]
+    .map(v => toSRGB8(v).toString(16)
+    .padStart(2, '0')).join(''));`;
 }
 
 // The overlay lists the active palette: swatch rail + name/hex rows
@@ -1406,6 +1444,34 @@ playBtn.addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------- boot
+
+// Wrap every range input in OKPalette's ruler-slider chrome
+function enhanceRangeInputs() {
+  document.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(input => {
+    const wrap = document.createElement('div');
+    wrap.className = 'range';
+    wrap.style.setProperty('--center', '0');
+    input.parentNode!.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    const highlight = document.createElement('div');
+    highlight.className = 'range-highlight';
+    const marker = document.createElement('div');
+    marker.className = 'range-marker';
+    wrap.append(highlight, marker);
+    const sync = () => {
+      const min = parseFloat(input.min || '0');
+      const max = parseFloat(input.max || '100');
+      const v = parseFloat(input.value);
+      wrap.style.setProperty('--progress', String(max > min ? (v - min) / (max - min) : 0));
+    };
+    input.addEventListener('input', sync);
+    rangeSyncs.push(sync);
+    sync();
+  });
+}
+const rangeSyncs: Array<() => void> = [];
+
+enhanceRangeInputs();
 
 syncOutputs();
 engine.commit();

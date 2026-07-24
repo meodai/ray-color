@@ -23,6 +23,20 @@ export interface Light {
   intensity: number;
   angle: number;  // spot cone, degrees
   size: number;   // area emitter radius (world units); 0 = point-like
+  /** Optional cartesian position (world units, sphere at origin). When set it
+   * takes precedence: commit() derives yaw/pitch/dist from it and writes them
+   * back so both parameterizations stay in sync. Note the usual distance
+   * clamp still applies — a position inside the sphere is pushed to its
+   * surface along the same direction. */
+  position?: ArrayLike<number>;
+}
+
+/** Convert a cartesian position to the spherical light parameterization. */
+export function positionToAngles(x: number, y: number, z: number) {
+  const dist = Math.sqrt(x * x + y * y + z * z);
+  const pitch = dist > 0 ? Math.asin(Math.max(-1, Math.min(1, y / dist))) * 180 / Math.PI : 0;
+  const yaw = Math.atan2(z, x) * 180 / Math.PI;
+  return { yaw, pitch, dist };
 }
 
 export interface Scene {
@@ -33,6 +47,10 @@ export interface Scene {
   wallHex: string;
   indirect: number;    // 0..1
   areaQuality: number; // shadow samples per area light
+  /** Per-wall mirror reflectivity, 0 (matte) .. 1 (full mirror). Reflective
+   * walls mirror the sphere/room visually AND act as virtual light sources:
+   * lights bounce off them onto the sphere, tinted by the wall color. */
+  wallReflect: { back: number; left: number; right: number; top: number; bottom: number };
 }
 
 export interface Hit {
@@ -207,6 +225,12 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     hexToRgb(scene.wallHex, wallColor);
     for (let i = 0; i < 3; i++) {
       const l = lights[i];
+      if (l.position) {
+        const p = positionToAngles(l.position[0], l.position[1], l.position[2]);
+        l.yaw = p.yaw;
+        l.pitch = p.pitch;
+        l.dist = p.dist;
+      }
       l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(scene.sphereRadius, l.dist));
       const yaw = l.yaw * Math.PI / 180;
       const pitch = l.pitch * Math.PI / 180;
@@ -363,6 +387,19 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     { x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 },
   ];
 
+  // Reflective walls as virtual light sources: each light mirrored across a
+  // reflective wall plane illuminates diffuse surfaces, tinted by the wall
+  // color and scaled by that wall's reflectivity. axis/s define the plane.
+  const MIRROR_WALLS = [
+    { axis: 2, s: 2, key: 'back' },
+    { axis: 0, s: -2, key: 'left' },
+    { axis: 0, s: 2, key: 'right' },
+    { axis: 1, s: 2, key: 'top' },
+    { axis: 1, s: -2, key: 'bottom' },
+  ] as const;
+  const vHit = new Float64Array(3);
+  const vDir = new Float64Array(3);
+
   // Shading result scratch — consumed immediately by every caller
   const shadeScratch: RGB = { r: 0, g: 0, b: 0 };
 
@@ -456,6 +493,74 @@ export function createEngine(width: number, height: number, scene: Scene, lights
       colorB += lightContribB;
     }
 
+    // Virtual mirror lights from reflective walls
+    const wrf = scene.wallReflect;
+    if (wrf.back > 0 || wrf.left > 0 || wrf.right > 0 || wrf.top > 0 || wrf.bottom > 0) {
+      vHit[0] = hitX; vHit[1] = hitY; vHit[2] = hitZ;
+      const bias = radius * 0.001 + 1e-4;
+      for (const wall of MIRROR_WALLS) {
+        const rho = wrf[wall.key];
+        if (rho <= 0) continue;
+        const a = wall.axis;
+        for (let i = 0; i < 3; i++) {
+          const intensity = lightIntensities[i];
+          if (intensity <= 0) continue;
+          const tintR = lightColors[i * 3] * wallColor[0] * rho * intensity;
+          const tintG = lightColors[i * 3 + 1] * wallColor[1] * rho * intensity;
+          const tintB = lightColors[i * 3 + 2] * wallColor[2] * rho * intensity;
+          if (tintR === 0 && tintG === 0 && tintB === 0) continue;
+
+          if (lights[i].type === 'directional') {
+            // mirror the direction across the wall plane
+            vDir[0] = directionalDirs[i][0];
+            vDir[1] = directionalDirs[i][1];
+            vDir[2] = directionalDirs[i][2];
+            vDir[a] = -vDir[a];
+            if (vDir[a] === 0) continue;
+            // the reflected path must actually meet this wall panel
+            const t = (wall.s - vHit[a]) / vDir[a];
+            if (t <= 0) continue;
+            const u = (a + 1) % 3, w = (a + 2) % 3;
+            if (Math.abs(vHit[u] + vDir[u] * t) > 2 || Math.abs(vHit[w] + vDir[w] * t) > 2) continue;
+            const NdotL = normalX * vDir[0] + normalY * vDir[1] + normalZ * vDir[2];
+            if (NdotL <= 0) continue;
+            const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, vDir[0], vDir[1], vDir[2], radius);
+            if (shadowT !== Infinity) continue;
+            colorR += tintR * NdotL;
+            colorG += tintG * NdotL;
+            colorB += tintB * NdotL;
+          } else {
+            // point-like virtual light: mirror the position (spot cones and
+            // area extents are approximated as points in the mirror)
+            vDir[0] = lightPositions[i * 3];
+            vDir[1] = lightPositions[i * 3 + 1];
+            vDir[2] = lightPositions[i * 3 + 2];
+            vDir[a] = 2 * wall.s - vDir[a];
+            let Lx = vDir[0] - hitX, Ly = vDir[1] - hitY, Lz = vDir[2] - hitZ;
+            const dist = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
+            if (dist === 0) continue;
+            Lx /= dist; Ly /= dist; Lz /= dist;
+            const La = a === 0 ? Lx : a === 1 ? Ly : Lz;
+            if (La === 0) continue;
+            const t = (wall.s - vHit[a]) / La;
+            if (t <= 0 || t >= dist) continue;
+            const u = (a + 1) % 3, w = (a + 2) % 3;
+            const Lu = u === 0 ? Lx : u === 1 ? Ly : Lz;
+            const Lw = w === 0 ? Lx : w === 1 ? Ly : Lz;
+            if (Math.abs(vHit[u] + Lu * t) > 2 || Math.abs(vHit[w] + Lw * t) > 2) continue;
+            const NdotL = normalX * Lx + normalY * Ly + normalZ * Lz;
+            if (NdotL <= 0) continue;
+            const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
+            if (shadowT < dist) continue;
+            const att = 1 / Math.max(0.01, dist * dist);
+            colorR += tintR * NdotL * att;
+            colorG += tintG * NdotL * att;
+            colorB += tintB * NdotL * att;
+          }
+        }
+      }
+    }
+
     if (enableIndirect && scene.indirect > 0) {
       let indirectR = 0, indirectG = 0, indirectB = 0;
       for (let s = 0; s < indirectDirs.length; s++) {
@@ -515,6 +620,62 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     return shadeScratch;
   }
 
+  // Wall shading with optional single-bounce mirror reflection.
+  // Which wall was hit is identified by its normal.
+  const wallShadeScratch: RGB = { r: 0, g: 0, b: 0 };
+
+  function wallReflectivityAt(nx: number, ny: number, nz: number) {
+    const w = scene.wallReflect;
+    if (nz === -1) return w.back;
+    if (nx === 1) return w.left;
+    if (nx === -1) return w.right;
+    if (ny === -1) return w.top;
+    return w.bottom;
+  }
+
+  function shadeWall(
+    hx: number, hy: number, hz: number,
+    nx: number, ny: number, nz: number,
+    ix: number, iy: number, iz: number // incident ray direction (unit)
+  ): RGB {
+    let c = calculateLighting(hx, hy, hz, nx, ny, nz, wallColor[0], wallColor[1], wallColor[2], false);
+    let r = c.r * 0.5, g = c.g * 0.5, b = c.b * 0.5;
+    const rho = wallReflectivityAt(nx, ny, nz);
+    if (rho > 0) {
+      const d = ix * nx + iy * ny + iz * nz;
+      const rx = ix - 2 * d * nx;
+      const ry = iy - 2 * d * ny;
+      const rz = iz - 2 * d * nz;
+      const eps = 1e-4;
+      let rr = 0, rg = 0, rb = 0;
+      const sHit = intersectSphere(hx + nx * eps, hy + ny * eps, hz + nz * eps, rx, ry, rz, scene.sphereRadius);
+      if (sHit) {
+        // shade the mirrored sphere point at normal * radius (exactness convention)
+        const sx = sHit.nx * scene.sphereRadius;
+        const sy = sHit.ny * scene.sphereRadius;
+        const sz = sHit.nz * scene.sphereRadius;
+        c = calculateLighting(sx, sy, sz, sHit.nx, sHit.ny, sHit.nz, sphereColor[0], sphereColor[1], sphereColor[2]);
+        rr = c.r; rg = c.g; rb = c.b;
+      } else {
+        const wHit = intersectRoom(hx + nx * eps, hy + ny * eps, hz + nz * eps, rx, ry, rz);
+        if (wHit) {
+          // mirrored walls stay matte — one bounce only
+          const wx = wHit.x, wy = wHit.y, wz = wHit.z;
+          const wnx = wHit.nx, wny = wHit.ny, wnz = wHit.nz;
+          c = calculateLighting(wx, wy, wz, wnx, wny, wnz, wallColor[0], wallColor[1], wallColor[2], false);
+          rr = c.r * 0.5; rg = c.g * 0.5; rb = c.b * 0.5;
+        }
+      }
+      r = r * (1 - rho) + rr * rho;
+      g = g * (1 - rho) + rg * rho;
+      b = b * (1 - rho) + rb * rho;
+    }
+    wallShadeScratch.r = r;
+    wallShadeScratch.g = g;
+    wallShadeScratch.b = b;
+    return wallShadeScratch;
+  }
+
   // ---------------------------------------------------------------- rendering
 
   // skipStride: pixels whose coordinates are multiples of it were already
@@ -533,10 +694,10 @@ export function createEngine(width: number, height: number, scene: Scene, lights
             color = calculateLighting(gbData[o], gbData[o + 1], gbData[o + 2], gbData[o + 3], gbData[o + 4], gbData[o + 5], sphereColor[0], sphereColor[1], sphereColor[2]);
           } else if (kind === 2) {
             const o = pix * 6;
-            color = calculateLighting(gbData[o], gbData[o + 1], gbData[o + 2], gbData[o + 3], gbData[o + 4], gbData[o + 5], wallColor[0], wallColor[1], wallColor[2], false);
-            color.r *= 0.5;
-            color.g *= 0.5;
-            color.b *= 0.5;
+            const hx = gbData[o], hy = gbData[o + 1], hz = gbData[o + 2];
+            const vz = hz - scene.cameraZ;
+            const il = Math.sqrt(hx * hx + hy * hy + vz * vz) || 1;
+            color = shadeWall(hx, hy, hz, gbData[o + 3], gbData[o + 4], gbData[o + 5], hx / il, hy / il, vz / il);
           } else {
             color = shadeScratch;
             color.r = 0; color.g = 0; color.b = 0;
@@ -564,10 +725,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
               gbKind[pix] = 2;
               gbData[o] = roomHit.x; gbData[o + 1] = roomHit.y; gbData[o + 2] = roomHit.z;
               gbData[o + 3] = roomHit.nx; gbData[o + 4] = roomHit.ny; gbData[o + 5] = roomHit.nz;
-              color = calculateLighting(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, wallColor[0], wallColor[1], wallColor[2], false);
-              color.r *= 0.5;
-              color.g *= 0.5;
-              color.b *= 0.5;
+              color = shadeWall(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, dirX, dirY, dirZ);
             } else {
               gbKind[pix] = 0;
               color = shadeScratch;

@@ -69,7 +69,6 @@
         <div class="l-overlay__body">
           <div class="palette" id="palette"></div>
           <div class="lib-snippet">
-            <div class="popover__title lib-snippet__title">Reproduce with ray-color</div>
             <pre class="code" title="Click to copy"><code id="libSnippetCode"></code></pre>
           </div>
         </div>
@@ -188,6 +187,11 @@
     <div class="field field--color">
       <span class="field__row"><label for="scnWallColor">Wall color</label></span>
       <input type="color" id="scnWallColor" value="#999999">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnReflect">Reflectivity</label><output id="scnReflectOut"></output></span>
+      <input type="range" id="scnReflect" min="0" max="1" value="0" step="0.05">
+      <p class="field__help">Mirror-like walls: the room reflects the sphere. One bounce.</p>
     </div>
     <div class="field">
       <span class="field__row"><label for="scnRadius">Sphere size</label><output id="scnRadiusOut"></output></span>

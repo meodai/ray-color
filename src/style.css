@@ -275,9 +275,11 @@ body {
   padding: 0 0.6rem;
 }
 
-#shapeCountWrap input[type="range"] {
-  width: 5.5rem;
-  height: 1rem;
+#shapeCountWrap .range {
+  width: 9rem;
+  flex: 0 0 9rem;
+  height: 1.4rem;
+  margin-top: 0;
 }
 
 #shapeCountWrap output {
@@ -581,12 +583,12 @@ body.colors-open .lib-snippet {
   transition-delay: 290ms;
 }
 
-.lib-snippet__title {
-  padding: 1rem 0.9rem 0.4rem;
-  font-size: 0.85rem;
+.lib-snippet {
+  margin-top: 1rem;
 }
 
 .code {
+  position: relative;
   display: block;
   cursor: pointer;
   margin: 0 0.9rem;
@@ -604,6 +606,17 @@ body.colors-open .lib-snippet {
 .code::selection {
   background: var(--bg);
   color: var(--text);
+}
+
+.code--copied::after {
+  content: 'Copied';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  padding: 0.1rem 0.45rem;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.55rem;
 }
 
 /* Palette rows: swatch rail + name/hex info that reveals on open */
@@ -949,44 +962,115 @@ body.colors-open .palette__row-hex {
 
 /* Inputs */
 
-input[type="range"] {
+/* Ruler-style range sliders (OKPalette): hidden input over a baseline with
+   graduated ticks, a floating marker dot, and a progress highlight */
+.range {
+  position: relative;
+  display: grid;
+  align-items: center;
+  margin: 0;
+  height: 1.6rem;
+  width: 100%;
+  /* OKPalette uses flex-basis 100% in row contexts; in our column fields
+     that would become a height basis and collapse the wrapper to 0 */
+  flex: 0 0 auto;
+}
+
+.range input[type="range"] {
+  position: absolute;
+  width: 100%;
+  /* extend the hit area upward so the floating handle itself is clickable */
+  top: -0.75rem;
+  height: calc(100% + 0.75rem);
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  z-index: 3;
   -webkit-appearance: none;
   appearance: none;
-  width: 100%;
-  height: 1.25rem;
-  margin: 0;
-  background: transparent;
-  cursor: pointer;
 }
 
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 2px;
+/* Ruler base line */
+.range::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
   background: currentColor;
+  pointer-events: none;
 }
 
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: calc(var(--dotSize) * .6);
-  height: calc(var(--dotSize) * .6);
-  margin-top: calc(1px - var(--dotSize) * .3);
-  border: 0;
-  border-radius: 50%;
-  background: var(--bg);
-  box-shadow: 0 0 0 1px currentColor, 0 0 0 .25rem var(--bg);
-}
-
-input[type="range"]::-moz-range-track {
+/* Highlight from center tick to current marker */
+.range-highlight {
+  position: absolute;
+  left: calc(min(var(--progress, 0.5), var(--center, 0.5)) * 100%);
+  right: calc((1 - max(var(--progress, 0.5), var(--center, 0.5))) * 100%);
+  bottom: 1px;
   height: 2px;
-  background: currentColor;
+  background: var(--line);
+  pointer-events: none;
+  z-index: 0;
+  transition:
+    height 0.2s cubic-bezier(0.3, 0.7, 0, 1),
+    bottom 0.2s cubic-bezier(0.3, 0.7, 0, 1),
+    opacity 0.1s linear;
 }
 
-input[type="range"]::-moz-range-thumb {
-  width: calc(var(--dotSize) * .6);
-  height: calc(var(--dotSize) * .6);
-  border: 0;
-  border-radius: 50%;
+.range:hover .range-highlight {
+  opacity: 0.4;
+  height: 5px;
+  bottom: 2px;
+}
+
+/* Ruler ticks: main ticks + 4 sub-ticks per interval */
+.range::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 1px;
+  height: 8px;
+  --count: var(--graduations, 5);
+  background-image:
+    linear-gradient(to right, var(--text) var(--s-line), transparent var(--s-line)),
+    linear-gradient(to right, var(--line) var(--s-line), transparent var(--s-line));
+  background-size:
+    calc((100% - var(--s-line)) / (var(--count) - 1)) 100%,
+    calc((100% - var(--s-line)) / ((var(--count) - 1) * 4)) 50%;
+  background-position:
+    0 100%,
+    0 100%;
+  background-repeat: repeat-x;
+  pointer-events: none;
+}
+
+.range-marker {
+  position: absolute;
+  left: calc(var(--progress, 0.5) * 100%);
+  bottom: 12px;
+  width: 0.5rem;
+  height: 0.5rem;
   background: var(--bg);
-  box-shadow: 0 0 0 1px currentColor, 0 0 0 .25rem var(--bg);
+  border: var(--s-line) solid var(--text);
+  border-radius: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.range-marker::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 11px;
+  background: currentColor;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 input[type="color"] {
