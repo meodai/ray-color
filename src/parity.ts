@@ -10,7 +10,7 @@
 //
 // Results land in the DOM and on window.__parity for automation.
 
-import { createEngine, type Scene, type Light } from './engine';
+import { createEngine, sampleLineDirs, sampleCircleDirs, distributions, toSRGB8, type Scene, type Light } from './engine';
 import { createGlPreview } from './gl-preview';
 import { PRESETS } from './presets';
 
@@ -202,6 +202,7 @@ function showPair(name: string, cpu: Uint8ClampedArray, gpu: Uint8ClampedArray) 
 // Console bisection helpers: render an arbitrary case on both paths and diff
 (window as any).__parityDebug = {
   createEngine, createGlPreview, CASES, W, H,
+  sampleLineDirs, sampleCircleDirs, distributions, toSRGB8,
   check(scene: Scene, lights: Light[]) {
     const engine = createEngine(W, H, scene, lights);
     engine.commit();

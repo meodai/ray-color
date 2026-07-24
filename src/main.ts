@@ -1015,6 +1015,21 @@ presetSelect.addEventListener('change', () => {
     // would override them on commit()
     delete lights[i].position;
   });
+  // Each preset ships a sampling shape tuned to its lighting, so loading one
+  // immediately shows a considered palette
+  const ps = preset.shape;
+  shape = {
+    kind: ps.kind,
+    a: new Float64Array(ps.a),
+    b: new Float64Array(ps.b ?? ps.a),
+    rho: ps.rho ?? 0,
+  };
+  shapeCount = ps.count;
+  shapeCountInput.value = String(shapeCount);
+  syncShapeCountFill();
+  shapeSpacing = ps.spacing ?? 'linear';
+  spacingButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.spacing === shapeSpacing));
+  setMode(ps.kind); // shape is already the right kind, so mode defaults keep it
   syncSceneInputs();
   if (selectedLight >= 0) openInspector(selectedLight); // re-sync open inspector
   update();
