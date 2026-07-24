@@ -1219,8 +1219,9 @@ body.colors-open .palette__row-hex {
   bottom: 1px;
   height: 8px;
   --count: var(--graduations, 5);
+  /* currentColor (not --text) so a disabled field dims its ticks too */
   background-image:
-    linear-gradient(to right, var(--text) var(--s-line), transparent var(--s-line)),
+    linear-gradient(to right, currentColor var(--s-line), transparent var(--s-line)),
     linear-gradient(to right, var(--line) var(--s-line), transparent var(--s-line));
   background-size:
     calc((100% - var(--s-line)) / (var(--count) - 1)) 100%,
@@ -1239,7 +1240,7 @@ body.colors-open .palette__row-hex {
   width: 0.5rem;
   height: 0.5rem;
   background: var(--bg);
-  border: var(--s-line) solid var(--text);
+  border: var(--s-line) solid currentColor;
   border-radius: 50%;
   transform: translateX(-50%);
   pointer-events: none;
@@ -1257,6 +1258,26 @@ body.colors-open .palette__row-hex {
   background: currentColor;
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+/* Disabled sliders (e.g. Distance on a directional light): the whole field —
+   label, output, baseline, ticks, marker — drops to a washed-out grey */
+.field:has(input:disabled) {
+  color: color-mix(in lab, var(--text) 35%, var(--bg));
+}
+
+.range:has(input:disabled) input[type="range"] {
+  cursor: default;
+}
+
+.range:has(input:disabled) .range-highlight {
+  opacity: 0;
+}
+
+.range:has(input:disabled):hover .range-highlight {
+  opacity: 0;
+  height: 2px;
+  bottom: 1px;
 }
 
 input[type="color"] {

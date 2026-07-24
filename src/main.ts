@@ -76,7 +76,7 @@ interface SurfaceShape {
 }
 let shape: SurfaceShape | null = null;
 let shapeColors: Float64Array[] = [];
-let shapeCount = 5;
+let shapeCount = 7;
 let shapeSpacing: keyof typeof distributions = 'linear';
 
 // ---------------------------------------------------------------- rendering
