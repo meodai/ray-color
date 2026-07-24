@@ -656,8 +656,13 @@ canvas.addEventListener('pointerdown', e => {
   shape = mode === 'line'
     ? { kind: 'line', a: start, b: new Float64Array(start), rho: 0 }
     : { kind: 'circle', a: start, b: new Float64Array(start), rho: 0.35 };
+  let dragging = false;
   const move = (ev: PointerEvent) => {
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
+    // a couple of pixels of press jiggle is still a click — the initial
+    // shape only starts following the cursor after real movement
+    if (!dragging && Math.hypot(q.x - p.x, q.y - p.y) < 5) return;
+    dragging = true;
     const h2 = engine.castRay(q.x, q.y);
     if (h2 && shape) {
       if (shape.kind === 'line') {
