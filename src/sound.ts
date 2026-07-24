@@ -4,11 +4,13 @@
 export class SoundManager {
   private ctx: AudioContext;
   private buffers: Record<string, AudioBuffer> = {};
+  // BASE_URL keeps these working when the app is served from a sub-path
+  // (e.g. GitHub Pages at /ray-color/)
   private soundUrls: Record<string, string> = {
-    success: '/sfx/Casual_6_7.m4a',
-    toggle: '/sfx/ClickAndSlide.m4a',
-    tick: '/sfx/HandleDragTick.m4a',
-    tack: '/sfx/ClickyButton4.m4a',
+    success: `${import.meta.env.BASE_URL}sfx/Casual_6_7.m4a`,
+    toggle: `${import.meta.env.BASE_URL}sfx/ClickAndSlide.m4a`,
+    tick: `${import.meta.env.BASE_URL}sfx/HandleDragTick.m4a`,
+    tack: `${import.meta.env.BASE_URL}sfx/ClickyButton4.m4a`,
   };
   private lastTickTime = 0;
   private globalVolume = 0.15;

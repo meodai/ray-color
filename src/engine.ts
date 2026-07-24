@@ -192,19 +192,22 @@ export interface Engine {
 }
 
 export function createEngine(width: number, height: number, scene: Scene, lights: Light[]): Engine {
+  // The light COUNT is fixed at creation (mutate lights in place + commit();
+  // create a new engine to add or remove lights)
+  const lightCount = lights.length;
   // Flat arrays for the hot loops, rebuilt from `lights` by commit()
   const sphereColor = new Float32Array(3);
   const wallColor = new Float32Array(3);
-  const lightPositions = new Float32Array(9);
-  const lightColors = new Float32Array(9);
-  const lightIntensities = new Float32Array(3);
-  const lightAngles = new Float32Array(3);
-  const directionalDirs = new Array(3).fill(null).map(() => new Float32Array(3));
-  const spotAxes = new Array(3).fill(null).map(() => new Float32Array(3));
+  const lightPositions = new Float32Array(lightCount * 3);
+  const lightColors = new Float32Array(lightCount * 3);
+  const lightIntensities = new Float32Array(lightCount);
+  const lightAngles = new Float32Array(lightCount);
+  const directionalDirs = new Array(lightCount).fill(null).map(() => new Float32Array(3));
+  const spotAxes = new Array(lightCount).fill(null).map(() => new Float32Array(3));
   // Orthonormal basis perpendicular to each light's axis — area lights sample
   // on a disk FACING the target, not a fixed horizontal one
-  const areaU = new Array(3).fill(null).map(() => new Float32Array(3));
-  const areaV = new Array(3).fill(null).map(() => new Float32Array(3));
+  const areaU = new Array(lightCount).fill(null).map(() => new Float32Array(3));
+  const areaV = new Array(lightCount).fill(null).map(() => new Float32Array(3));
 
   // Camera cache
   let cachedTanFov = 0, cachedAspectRatio = 1, cachedAspectTanFov = 0;
@@ -223,7 +226,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
   function commit() {
     hexToRgb(scene.sphereHex, sphereColor);
     hexToRgb(scene.wallHex, wallColor);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < lightCount; i++) {
       const l = lights[i];
       if (l.position) {
         const p = positionToAngles(l.position[0], l.position[1], l.position[2]);
@@ -412,7 +415,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
     let colorR = 0, colorG = 0, colorB = 0;
     const radius = scene.sphereRadius;
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < lightCount; i++) {
       const lightType = lights[i].type;
       const lightX = lightPositions[i * 3];
       const lightY = lightPositions[i * 3 + 1];
@@ -502,7 +505,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
         const rho = wrf[wall.key];
         if (rho <= 0) continue;
         const a = wall.axis;
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < lightCount; i++) {
           const intensity = lightIntensities[i];
           if (intensity <= 0) continue;
           const tintR = lightColors[i * 3] * wallColor[0] * rho * intensity;
@@ -570,7 +573,7 @@ export function createEngine(width: number, height: number, scene: Scene, lights
         const wallHit = intersectRoom(hitX + normalX * 0.001, hitY + normalY * 0.001, hitZ + normalZ * 0.001, dir.x, dir.y, dir.z);
         if (wallHit) {
           let wallLightR = 0, wallLightG = 0, wallLightB = 0;
-          for (let i = 0; i < 3; i++) {
+          for (let i = 0; i < lightCount; i++) {
             const type = lights[i].type;
             let wallDiffuse = 0;
             if (type === 'directional') {
