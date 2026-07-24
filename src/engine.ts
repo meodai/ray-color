@@ -72,6 +72,78 @@ export function hexToRgb(hex: string, out: Float32Array) {
   return out;
 }
 
+// ---------------------------------------------------------------- surface shapes
+// Shapes drawn on the sphere sample N colors along themselves. A "line" is a
+// geodesic arc between two surface anchors; a circle has a center anchor and
+// an angular radius. Point spacing along the shape is pluggable: any
+// monotonic (0..1) -> (0..1) function works as a Distribution.
+
+export type Distribution = (t: number) => number;
+
+export const distributions = {
+  linear: (t: number) => t,
+  smoothstep: (t: number) => t * t * (3 - 2 * t),
+} satisfies Record<string, Distribution>;
+
+/** Spherical linear interpolation between two unit directions. */
+export function slerp(a: ArrayLike<number>, b: ArrayLike<number>, t: number, out: Float64Array = new Float64Array(3)) {
+  let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  dot = Math.max(-1, Math.min(1, dot));
+  const theta = Math.acos(dot);
+  if (theta < 1e-6) {
+    out[0] = a[0]; out[1] = a[1]; out[2] = a[2];
+    return out;
+  }
+  const invSin = 1 / Math.sin(theta);
+  const wa = Math.sin((1 - t) * theta) * invSin;
+  const wb = Math.sin(t * theta) * invSin;
+  out[0] = wa * a[0] + wb * b[0];
+  out[1] = wa * a[1] + wb * b[1];
+  out[2] = wa * a[2] + wb * b[2];
+  return out;
+}
+
+/** Point on the circle of angular radius rho around a center anchor, at angle phi.
+ * The circle's tangent basis is derived deterministically from the center. */
+export function circleDir(center: ArrayLike<number>, rho: number, phi: number, out: Float64Array = new Float64Array(3)) {
+  const hy = Math.abs(center[1]) > 0.99 ? 0 : 1;
+  const hx = 1 - hy;
+  let ux = hy * center[2];
+  let uy = -hx * center[2];
+  let uz = hx * center[1] - hy * center[0];
+  const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+  ux /= ulen; uy /= ulen; uz /= ulen;
+  const vx = center[1] * uz - center[2] * uy;
+  const vy = center[2] * ux - center[0] * uz;
+  const vz = center[0] * uy - center[1] * ux;
+  const cosR = Math.cos(rho), sinR = Math.sin(rho);
+  const cp = Math.cos(phi), sp = Math.sin(phi);
+  out[0] = cosR * center[0] + sinR * (cp * ux + sp * vx);
+  out[1] = cosR * center[1] + sinR * (cp * uy + sp * vy);
+  out[2] = cosR * center[2] + sinR * (cp * uz + sp * vz);
+  return out;
+}
+
+/** N surface anchors along the geodesic from a to b (endpoints included). */
+export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count: number, spacing: Distribution = distributions.linear): Float64Array[] {
+  const n = Math.max(2, count);
+  const dirs: Float64Array[] = [];
+  for (let k = 0; k < n; k++) {
+    dirs.push(slerp(a, b, spacing(k / (n - 1))));
+  }
+  return dirs;
+}
+
+/** N surface anchors around a circle (end-exclusive, so no seam duplicate). */
+export function sampleCircleDirs(center: ArrayLike<number>, rho: number, count: number, spacing: Distribution = distributions.linear): Float64Array[] {
+  const n = Math.max(2, count);
+  const dirs: Float64Array[] = [];
+  for (let k = 0; k < n; k++) {
+    dirs.push(circleDir(center, rho, spacing(k / n) * 2 * Math.PI));
+  }
+  return dirs;
+}
+
 // ---------------------------------------------------------------- engine
 
 export interface Engine {

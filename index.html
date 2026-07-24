@@ -5,186 +5,134 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ray Color</title>
-  <meta name="description" content="A tiny raycaster color lab: one sphere, three lights, a five-sided room. Click the sphere to collect the colors the rays bring back.">
+  <meta name="description" content="Direct-manipulation playground for the Ray Color raycaster: sample colors from a lit sphere, aim lights by dragging, copy the gradient as CSS.">
   <link rel="icon" type="image/svg+xml" href="/vite.svg">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Iosevka/6.0.0/iosevka/iosevka.min.css">
   <link rel="stylesheet" href="/src/style.css">
 </head>
 
 <body>
-  <header class="app-header">
-    <h1 class="app-header__title">Ray Color</h1>
-    <p class="app-header__subtitle">One sphere, three lights, a five-sided room. Click the sphere to collect colors, drag points and lights to move them, scroll to dolly the camera. Or try the <a href="/alt.html">playground</a>.</p>
+  <header class="bar">
+    <h1 class="bar__title">Ray Color <span class="bar__sub">· playground</span></h1>
+    <nav class="bar__actions">
+      <div class="seg" role="group" aria-label="Sampling mode">
+        <button class="button seg__btn seg__btn--active" data-mode="points">Points</button>
+        <button class="button seg__btn" data-mode="line">Line</button>
+        <button class="button seg__btn" data-mode="circle">Circle</button>
+      </div>
+      <label class="bar__count" id="shapeCountWrap" hidden>
+        <input type="range" id="shapeCount" min="2" max="32" value="8" step="1">
+        <output id="shapeCountOut">8</output>
+      </label>
+      <div class="seg seg--small" id="spacingSeg" role="group" aria-label="Point spacing" hidden>
+        <button class="button seg__btn seg__btn--active" data-spacing="linear">Linear</button>
+        <button class="button seg__btn" data-spacing="smoothstep">Smooth</button>
+      </div>
+      <button class="button" id="copyCss" hidden>Copy CSS</button>
+      <button class="button" id="playBtn" title="Orbit the lights around the sphere" aria-pressed="false">&#9654;</button>
+      <button class="button" id="sceneBtn" aria-expanded="false">Scene</button>
+    </nav>
   </header>
 
   <main class="stage">
-    <div class="container">
+    <div class="viewport" id="viewport">
       <canvas id="canvas" width="400" height="400"></canvas>
-      <svg id="light-gizmo" aria-hidden="true"></svg>
-      <div id="light-markers"></div>
-      <div id="sample-markers"></div>
-      <div id="light-gizmo-label" hidden></div>
+      <svg id="gizmo" aria-hidden="true"></svg>
+      <svg id="shape-svg" aria-hidden="true"></svg>
+      <div id="light-layer"></div>
+      <div id="sample-layer"></div>
+      <div id="shape-handles"></div>
+
+      <div class="popover popover--inspector" id="inspector" hidden>
+        <div class="popover__title" id="inspTitle">Light 1</div>
+        <div class="field field--orbit">
+          <span class="field__row"><label id="orbitLabel">Direction</label><output id="orbitOut"></output></span>
+          <div id="orbit" title="Drag to spin the light around the sphere" aria-labelledby="orbitLabel">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <path id="arc-pb" class="back"></path>
+              <path id="arc-mb" class="back"></path>
+              <path id="arc-pf" class="front"></path>
+              <path id="arc-mf" class="front"></path>
+            </svg>
+            <div id="orbit-dot"></div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field__row"><label for="inspType">Type</label></span>
+          <select id="inspType" class="light-type">
+            <button>
+              <selectedcontent></selectedcontent>
+            </button>
+            <option value="point">
+              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+              <span class="lt-name">Point light</span>
+            </option>
+            <option value="area">
+              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 4.5l2.3-1.4M11.3 8h3.2M10.5 11.5l2.3 1.4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+              <span class="lt-name">Area light</span>
+            </option>
+            <option value="directional">
+              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M2 8h7M2 12h7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.5 2.4L14 4l-4.5 1.6zM9.5 6.4L14 8l-4.5 1.6zM9.5 10.4L14 12l-4.5 1.6z" fill="currentColor"/></svg>
+              <span class="lt-name">Directional</span>
+            </option>
+            <option value="spot">
+              <svg class="lt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+              <span class="lt-name">Spot light</span>
+            </option>
+          </select>
+        </div>
+        <div class="field field--color">
+          <span class="field__row"><label for="inspColor">Color</label></span>
+          <input type="color" id="inspColor">
+        </div>
+        <div class="field">
+          <span class="field__row"><label for="inspIntensity">Intensity</label><output id="inspIntensityOut"></output></span>
+          <input type="range" id="inspIntensity" min="0" max="1.25" step="0.05">
+        </div>
+        <div class="field" id="inspDistRow">
+          <span class="field__row"><label for="inspDist">Distance</label><output id="inspDistOut"></output></span>
+          <input type="range" id="inspDist" min="0.1" max="12" step="0.05">
+        </div>
+        <div class="field" id="inspAngleRow" hidden>
+          <span class="field__row"><label for="inspAngle">Cone angle&deg;</label><output id="inspAngleOut"></output></span>
+          <input type="range" id="inspAngle" min="10" max="60" step="5">
+        </div>
+      </div>
     </div>
+    <p class="hints">click sphere = sample &nbsp;·&nbsp; line / circle = drag to draw &nbsp;·&nbsp; drag points, handles &amp; lights &nbsp;·&nbsp; globe = aim &nbsp;·&nbsp; backspace = delete &nbsp;·&nbsp; scroll = dolly / distance &nbsp;·&nbsp; 1 2 3 = lights &nbsp;·&nbsp; esc = close</p>
   </main>
 
-  <aside class="samples-panel">
-    <h3>Colors</h3>
-    <div id="samples-list"></div>
-  </aside>
-
-  <section class="controls">
-    <div class="panel">
-      <h3>Camera &amp; Sphere</h3>
-      <div class="control">
-        <span class="control__row"><label for="cameraZ">Camera Z</label><output data-for="cameraZ"></output></span>
-        <input type="range" id="cameraZ" min="-10" max="-2" value="-4.5" step="0.1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="cameraFOV">FOV</label><output data-for="cameraFOV"></output></span>
-        <input type="range" id="cameraFOV" min="10" max="120" value="30" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="sphereRadius">Sphere size</label><output data-for="sphereRadius"></output></span>
-        <input type="range" id="sphereRadius" min="0.1" max="1.5" value="0.8" step="0.1">
-      </div>
-      <div class="control control--color">
-        <span class="control__row"><label for="sphereColor">Sphere color</label></span>
-        <input type="color" id="sphereColor" value="#ffffff">
-      </div>
-      <div class="control control--color">
-        <span class="control__row"><label for="wallColor">Wall color</label></span>
-        <input type="color" id="wallColor" value="#999999">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="indirectIntensity">Indirect light</label><output data-for="indirectIntensity"></output></span>
-        <input type="range" id="indirectIntensity" min="0" max="1" value="0.3" step="0.05">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="lightSize">Light size</label><output data-for="lightSize"></output></span>
-        <input type="range" id="lightSize" min="0" max="0.5" value="0.15" step="0.05">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="areaQuality">Area samples</label><output data-for="areaQuality"></output></span>
-        <input type="range" id="areaQuality" min="1" max="48" value="6" step="1">
-      </div>
+  <div class="popover popover--scene" id="scenePopover" hidden>
+    <div class="popover__title">Scene</div>
+    <div class="field field--color">
+      <span class="field__row"><label for="scnSphereColor">Sphere color</label></span>
+      <input type="color" id="scnSphereColor" value="#ffffff">
     </div>
-
-    <div class="panel" id="light1Panel">
-      <h3>Light 1</h3>
-      <div class="control">
-        <span class="control__row"><label for="light1Type">Type</label></span>
-        <select id="light1Type">
-          <option value="point">Point light</option>
-          <option value="area">Area light</option>
-          <option value="directional" selected>Directional</option>
-          <option value="spot">Spot light</option>
-        </select>
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light1Yaw">Yaw&deg;</label><output data-for="light1Yaw"></output></span>
-        <input type="range" id="light1Yaw" min="-180" max="180" value="45" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light1Pitch">Pitch&deg;</label><output data-for="light1Pitch"></output></span>
-        <input type="range" id="light1Pitch" min="-89" max="89" value="20" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light1Dist">Distance</label><output data-for="light1Dist"></output></span>
-        <input type="range" id="light1Dist" min="0.1" max="12" value="2" step="0.05" data-dynamic-dist>
-      </div>
-      <div class="control control--color">
-        <span class="control__row"><label for="light1Color">Color</label></span>
-        <input type="color" id="light1Color" value="#ff0000">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light1I">Intensity</label><output data-for="light1I"></output></span>
-        <input type="range" id="light1I" min="0" max="1.25" value="0.6" step="0.1">
-      </div>
-      <div class="control" id="light1AngleControl" hidden>
-        <span class="control__row"><label for="light1Angle">Cone angle&deg;</label><output data-for="light1Angle"></output></span>
-        <input type="range" id="light1Angle" min="10" max="60" value="30" step="5">
-      </div>
+    <div class="field field--color">
+      <span class="field__row"><label for="scnWallColor">Wall color</label></span>
+      <input type="color" id="scnWallColor" value="#999999">
     </div>
-
-    <div class="panel" id="light2Panel">
-      <h3>Light 2</h3>
-      <div class="control">
-        <span class="control__row"><label for="light2Type">Type</label></span>
-        <select id="light2Type">
-          <option value="point">Point light</option>
-          <option value="area">Area light</option>
-          <option value="directional" selected>Directional</option>
-          <option value="spot">Spot light</option>
-        </select>
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light2Yaw">Yaw&deg;</label><output data-for="light2Yaw"></output></span>
-        <input type="range" id="light2Yaw" min="-180" max="180" value="-135" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light2Pitch">Pitch&deg;</label><output data-for="light2Pitch"></output></span>
-        <input type="range" id="light2Pitch" min="-89" max="89" value="20" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light2Dist">Distance</label><output data-for="light2Dist"></output></span>
-        <input type="range" id="light2Dist" min="0.1" max="12" value="2" step="0.05" data-dynamic-dist>
-      </div>
-      <div class="control control--color">
-        <span class="control__row"><label for="light2Color">Color</label></span>
-        <input type="color" id="light2Color" value="#00ff00">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light2I">Intensity</label><output data-for="light2I"></output></span>
-        <input type="range" id="light2I" min="0" max="1.25" value="0.6" step="0.1">
-      </div>
-      <div class="control" id="light2AngleControl" hidden>
-        <span class="control__row"><label for="light2Angle">Cone angle&deg;</label><output data-for="light2Angle"></output></span>
-        <input type="range" id="light2Angle" min="10" max="60" value="30" step="5">
-      </div>
+    <div class="field">
+      <span class="field__row"><label for="scnRadius">Sphere size</label><output id="scnRadiusOut"></output></span>
+      <input type="range" id="scnRadius" min="0.1" max="1.5" value="0.8" step="0.1">
     </div>
-
-    <div class="panel" id="light3Panel">
-      <h3>Light 3</h3>
-      <div class="control">
-        <span class="control__row"><label for="light3Type">Type</label></span>
-        <select id="light3Type">
-          <option value="point">Point light</option>
-          <option value="area">Area light</option>
-          <option value="directional" selected>Directional</option>
-          <option value="spot">Spot light</option>
-        </select>
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light3Yaw">Yaw&deg;</label><output data-for="light3Yaw"></output></span>
-        <input type="range" id="light3Yaw" min="-180" max="180" value="0" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light3Pitch">Pitch&deg;</label><output data-for="light3Pitch"></output></span>
-        <input type="range" id="light3Pitch" min="-89" max="89" value="30" step="1">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light3Dist">Distance</label><output data-for="light3Dist"></output></span>
-        <input type="range" id="light3Dist" min="0.1" max="12" value="2" step="0.05" data-dynamic-dist>
-      </div>
-      <div class="control control--color">
-        <span class="control__row"><label for="light3Color">Color</label></span>
-        <input type="color" id="light3Color" value="#0000ff">
-      </div>
-      <div class="control">
-        <span class="control__row"><label for="light3I">Intensity</label><output data-for="light3I"></output></span>
-        <input type="range" id="light3I" min="0" max="1.25" value="0.6" step="0.1">
-      </div>
-      <div class="control" id="light3AngleControl" hidden>
-        <span class="control__row"><label for="light3Angle">Cone angle&deg;</label><output data-for="light3Angle"></output></span>
-        <input type="range" id="light3Angle" min="10" max="60" value="30" step="5">
-      </div>
+    <div class="field">
+      <span class="field__row"><label for="scnFov">FOV</label><output id="scnFovOut"></output></span>
+      <input type="range" id="scnFov" min="10" max="120" value="30" step="1">
     </div>
-  </section>
-
-  <footer class="stats">
-    <span id="resolution"></span>
-    <span id="fps"></span>
-  </footer>
+    <div class="field">
+      <span class="field__row"><label for="scnIndirect">Indirect light</label><output id="scnIndirectOut"></output></span>
+      <input type="range" id="scnIndirect" min="0" max="1" value="0.3" step="0.05">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnLightSize">Light size</label><output id="scnLightSizeOut"></output></span>
+      <input type="range" id="scnLightSize" min="0" max="0.5" value="0.15" step="0.05">
+    </div>
+    <div class="field">
+      <span class="field__row"><label for="scnQuality">Area samples</label><output id="scnQualityOut"></output></span>
+      <input type="range" id="scnQuality" min="1" max="48" value="6" step="1">
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
