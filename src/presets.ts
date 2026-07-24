@@ -103,17 +103,17 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Full house',
-    scene: { ...baseScene(), areaQuality: 16, indirect: 0.7, fov: 45, sphereRadius: 1.5, cameraZ: -7, wallHex: '#778899', wallReflect: { back: 0.4, left: 0.4, right: 0.4, top: 0.4, bottom: 0.4 } },
+    // Hand-tuned in the playground (settings log). The spot sits outside the
+    // mirrored right wall (x > 2), so its mirror image lands inside the room —
+    // the self-mirror case the parity suite guards against
+    scene: { ...baseScene(), areaQuality: 16, indirect: 0.7, fov: 45, sphereRadius: 1.5, cameraZ: -7, wallHex: '#778899', wallReflect: { back: 0.15, left: 0.15, right: 0.15, top: 0.15, bottom: 0.15 } },
     lights: [
-      // Area light above the top wall (y > 2) — see Mirror box note
-      light({ type: 'area', yaw: 100, pitch: 60, dist: 3.5, hex: '#ffee88', intensity: 4.9, size: 1.2 }),
-      // Wider cone than the original dist-6 authoring: at dist 2.4 the
-      // sphere subtends ~39°, so 40° keeps it fully covered
-      light({ type: 'spot', yaw: -30, pitch: -10, dist: 2.4, hex: '#8844ff', intensity: 1.9, angle: 40 }),
-      light({ type: 'directional', yaw: -90, pitch: 20, hex: '#00aaff', intensity: 0.4 }),
+      light({ type: 'area', yaw: -90, pitch: -3, dist: 2.6, hex: '#ffee88', intensity: 1.25, size: 0.2 }),
+      light({ type: 'spot', yaw: -30, pitch: -10, dist: 3.55, hex: '#8844ff', intensity: 1.9, angle: 40 }),
+      light({ type: 'directional', yaw: -127, pitch: -35, dist: 2.539, hex: '#00aaff', intensity: 0.2 }),
     ],
-    // Off-center ring through the gold top light and violet spot wash
-    shape: { kind: 'circle', a: unit(-0.1, 0.35, -0.93), rho: Math.asin(0.7), count: 7 },
+    // Near-equator line, gold key on the left across to the violet spot wash
+    shape: { kind: 'line', a: unit(-0.927, -0.138, -0.35), b: unit(0.899, 0.071, -0.433), count: 7, spacing: 'linear' },
   },
   {
     name: 'Eclipse',
