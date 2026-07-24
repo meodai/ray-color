@@ -39,9 +39,15 @@
               <button class="numberslider__button" type="button" id="shapeCountPlus">+</button>
             </span>
           </div>
-          <div class="seg seg--small" id="spacingSeg" role="group" aria-label="Point spacing" hidden>
-            <button class="button seg__btn seg__btn--active" data-spacing="linear">Linear</button>
-            <button class="button seg__btn" data-spacing="smoothstep">Smooth</button>
+          <div class="seg" id="spacingSeg" role="group" aria-label="Point spacing" hidden>
+            <button class="button button--icon seg__btn seg__btn--active" data-spacing="linear" title="Linear spacing">
+              <svg class="button__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8H14" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="2.5" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13.5" cy="8" r="1.4" fill="currentColor"/></svg>
+              <span>Linear</span>
+            </button>
+            <button class="button button--icon seg__btn" data-spacing="smoothstep" title="Smoothstep spacing">
+              <svg class="button__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8H14" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="2.5" cy="8" r="1.4" fill="currentColor"/><circle cx="4.6" cy="8" r="1.4" fill="currentColor"/><circle cx="11.4" cy="8" r="1.4" fill="currentColor"/><circle cx="13.5" cy="8" r="1.4" fill="currentColor"/></svg>
+              <span>Smooth</span>
+            </button>
           </div>
           <span class="menu__spacer"></span>
           <span class="menu__brand">Ray Color</span>
@@ -102,6 +108,15 @@
             </button>
           </div>
         </div>
+      </div>
+      <div class="menu menu--overlay" id="paletteHeader">
+        <h2 class="button button--title"><span id="paletteName"></span></h2>
+        <button class="button button--icon button--close button--end" id="closeColorsBtn" title="Close the palette drawer">
+          <svg class="button__icon" stroke-width="1.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span>Close</span>
+        </button>
       </div>
       </div>
 

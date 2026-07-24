@@ -890,6 +890,12 @@ drawerToggleBtn.addEventListener('click', e => {
   e.stopPropagation();
   setColorsOpen(!colorsOpen());
 });
+
+const paletteNameEl = document.getElementById('paletteName')!;
+document.getElementById('closeColorsBtn')!.addEventListener('click', e => {
+  e.stopPropagation();
+  setColorsOpen(false);
+});
 let selectedSample: Sample | null = null;
 
 const hex6 = (c: ArrayLike<number>) =>
@@ -977,21 +983,33 @@ function applyColorNames() {
   });
 }
 
+let lastPaletteKey = '';
+
 function requestColorNames() {
   if (!colorsOpen()) return;
-  const missing = [...new Set(activeColors().map(hex6))].filter(h => !colorNameCache.has(h));
   applyColorNames();
-  if (!missing.length) return;
+  // Full palette every time: the response's paletteTitle names the drawer,
+  // like OKPalette's header (per-hex names still come from the cache)
+  const values = [...new Set(activeColors().map(hex6))];
+  if (!values.length) {
+    paletteNameEl.textContent = '';
+    lastPaletteKey = '';
+    return;
+  }
+  const key = values.join(',');
+  if (key === lastPaletteKey) return;
   clearTimeout(nameTimer);
   nameAbort?.abort();
   nameTimer = window.setTimeout(() => {
     nameAbort = new AbortController();
-    fetch(`https://api.color.pizza/v1/?values=${missing.join(',')}&list=bestOf&noduplicates=true`, { signal: nameAbort.signal })
+    fetch(`https://api.color.pizza/v1/?values=${key}&list=bestOf&noduplicates=true`, { signal: nameAbort.signal })
       .then(r => r.json())
       .then(data => {
+        lastPaletteKey = key;
         for (const c of data.colors ?? []) {
           colorNameCache.set(String(c.requestedHex).replace('#', '').toLowerCase(), c.name);
         }
+        if (data.paletteTitle) paletteNameEl.textContent = data.paletteTitle;
         applyColorNames();
       })
       .catch(() => { /* offline or aborted — rows keep showing their hex */ });

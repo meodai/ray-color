@@ -235,11 +235,6 @@ body {
   box-shadow: 0 2px 0 0 var(--text);
 }
 
-.seg--small .seg__btn {
-  font-size: .65rem;
-  padding: .35rem .6rem;
-}
-
 .button--square {
   width: var(--s-square);
   padding: 0;
@@ -534,6 +529,62 @@ canvas {
 body.colors-open .l-overlay--left {
   transform: translateX(calc(-100% + var(--s-square) + var(--s-line)));
   cursor: default;
+}
+
+/* Overlay header (palette name + close): parked in the toolbar band behind
+   the opaque shape tools; opening the colors drawer slides it out to their
+   left, above the drawer — like OKPalette's menu--overlay */
+.menu--overlay {
+  position: absolute;
+  top: calc(var(--s-square) * -1 + var(--s-line));
+  left: var(--s-line);
+  z-index: 0;
+  height: var(--s-square);
+  display: flex;
+  transition: transform 0.2s cubic-bezier(0.3, 0.7, 0, 1);
+}
+
+/* the cells carry their own hairlines — overlap them like .seg does */
+.menu--overlay > .button + .button {
+  margin-left: calc(var(--s-line) * -1);
+}
+
+body.colors-open .menu--overlay {
+  transform: translateX(-100%);
+  transition-delay: 0.1s;
+}
+
+.button--title {
+  margin: 0;
+  padding-inline: 1.5rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none; /* a label, not a button: no hover lift, no cursor */
+}
+
+/* the cell rides the header slide; only its text fades in */
+.button--title > span {
+  display: block;
+  min-height: 1.55em;
+  opacity: 0;
+  transition: opacity 0.2s linear;
+}
+
+body.colors-open .button--title > span {
+  opacity: 1;
+  transition-delay: 0.3s; /* after the header row has slid out */
+}
+
+.button--close {
+  transform: translateX(calc(var(--s-square) * 2));
+  transition: transform 0.2s cubic-bezier(0.3, 0.7, 0, 1);
+}
+
+body.colors-open .button--close {
+  transform: translateX(0);
 }
 
 body.colors-open .l-overlay--left .palette__swatch {
