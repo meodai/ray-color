@@ -508,19 +508,68 @@ function updateShapeOverlay() {
 
 const clampDot = (d: number) => Math.max(-1, Math.min(1, d));
 
+// Trackball drag for a point anchored to the sphere's surface — same feel as
+// the lights: relative to where it was (pressing never jumps), and the back
+// hemisphere is reached by continuing past the silhouette, where horizontal
+// motion inverts like the far side of a spinning globe.
+const SURFACE_DEG_PER_RADIUS = 90;
+function beginSurfaceDrag(e: PointerEvent, dir: Float64Array, onMove: () => void) {
+  const start = eventToCanvasPixels(e.clientX, e.clientY);
+  const yaw0 = Math.atan2(dir[0], -dir[2]) * 180 / Math.PI;
+  const pitch0 = Math.asin(clampDot(dir[1])) * 180 / Math.PI;
+  // one silhouette-radius of pointer travel = 90° of rotation
+  const silR = Math.max(1, engine.worldToScreen(state.sphereRadius, 0, 0).x - canvas.width / 2);
+  const move = (ev: PointerEvent) => {
+    sound.playTick();
+    const q = eventToCanvasPixels(ev.clientX, ev.clientY);
+    const dxu = (q.x - start.x) / silR;
+    const dyu = (start.y - q.y) / silR;
+    let yaw = yaw0 + dxu * SURFACE_DEG_PER_RADIUS;
+    // Pitch keeps going over the poles: crossing one flips yaw to the far side
+    let pitch = wrap180(pitch0 + dyu * SURFACE_DEG_PER_RADIUS);
+    if (pitch > 90) {
+      pitch = 180 - pitch;
+      yaw += 180;
+    } else if (pitch < -90) {
+      pitch = -180 - pitch;
+      yaw += 180;
+    }
+    const yr = wrap180(yaw) * Math.PI / 180;
+    const pr = pitch * Math.PI / 180;
+    const cp = Math.cos(pr);
+    dir[0] = Math.sin(yr) * cp;
+    dir[1] = Math.sin(pr);
+    dir[2] = -Math.cos(yr) * cp;
+    onMove();
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
 // Editing: drag an endpoint, the circle's center, or the radius grip
-function beginHandleDrag(role: 'a' | 'b' | 'r') {
+function beginHandleDrag(e: PointerEvent, role: 'a' | 'b' | 'r') {
+  if (!shape) return;
+  if (role !== 'r') {
+    // center / endpoints ride the trackball so they can cross to the back
+    const target = role === 'a' ? shape.a : shape.b;
+    beginSurfaceDrag(e, target, () => {
+      recomputeShapeColors();
+      updateShapeOverlay();
+      updateStops();
+    });
+    return;
+  }
+  // radius grip: absolute — rho is the angle between center and the point under the pointer
   const move = (ev: PointerEvent) => {
     sound.playTick();
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
     const h = engine.castRay(q.x, q.y);
     if (!h || !shape) return;
-    if (role === 'r') {
-      shape.rho = Math.acos(clampDot(shape.a[0] * h.nx + shape.a[1] * h.ny + shape.a[2] * h.nz));
-    } else {
-      const target = role === 'a' ? shape.a : shape.b;
-      target[0] = h.nx; target[1] = h.ny; target[2] = h.nz;
-    }
+    shape.rho = Math.acos(clampDot(shape.a[0] * h.nx + shape.a[1] * h.ny + shape.a[2] * h.nz));
     recomputeShapeColors();
     updateShapeOverlay();
     updateStops();
@@ -558,7 +607,7 @@ canvas.addEventListener('pointerdown', e => {
   for (const h of shapeHandlePoints()) {
     if (Math.hypot(p.x - h.sx, p.y - h.sy) < GRAB_RADIUS) {
       e.preventDefault();
-      beginHandleDrag(h.role);
+      beginHandleDrag(e, h.role);
       return;
     }
   }
@@ -599,7 +648,7 @@ shapeHandles.addEventListener('pointerdown', e => {
   if (!el || !shape) return;
   e.preventDefault();
   e.stopPropagation();
-  beginHandleDrag(el.dataset.handle as 'a' | 'b' | 'r');
+  beginHandleDrag(e, el.dataset.handle as 'a' | 'b' | 'r');
 });
 
 function deleteShape() {
@@ -1309,28 +1358,14 @@ function beginSampleDrag(event: PointerEvent, sample: Sample) {
   event.preventDefault();
   event.stopPropagation();
   selectSample(sample);
-  const move = (e: PointerEvent) => {
-    sound.playTick();
-    const p = eventToCanvasPixels(e.clientX, e.clientY);
-    const hit = engine.castRay(p.x, p.y);
-    if (hit) {
-      sample.dir[0] = hit.nx;
-      sample.dir[1] = hit.ny;
-      sample.dir[2] = hit.nz;
-      const color = engine.shade(sample.dir);
-      sample.color[0] = color.r;
-      sample.color[1] = color.g;
-      sample.color[2] = color.b;
-    }
+  beginSurfaceDrag(event, sample.dir, () => {
+    const color = engine.shade(sample.dir);
+    sample.color[0] = color.r;
+    sample.color[1] = color.g;
+    sample.color[2] = color.b;
     updateSampleMarker(sample);
     updateStops();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
+  });
 }
 
 let draggedLight = -1;
