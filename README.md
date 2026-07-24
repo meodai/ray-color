@@ -1,5 +1,9 @@
 # Ray Color
 
+[![npm version](https://img.shields.io/npm/v/ray-color)](https://www.npmjs.com/package/ray-color)
+[![gzipped size](https://img.shields.io/bundlephobia/minzip/ray-color?label=gzipped)](https://bundlephobia.com/package/ray-color)
+![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+
 Generative color palettes from a raytraced scene — **edit the conditions, not the colors.**
 
 ## The tennis ball
@@ -33,7 +37,8 @@ different angle.
 ## The library
 
 `src/engine.ts` is DOM-free: it renders into any `Uint8ClampedArray` and can
-generate palettes headlessly, no canvas required.
+generate palettes headlessly, no canvas required. The whole engine is about
+**6 kB gzipped** (ESM + CJS) with **zero runtime dependencies**.
 
 ```ts
 import {
@@ -116,12 +121,14 @@ back onto the tennis ball.
 
 ```sh
 npm install
-npm run dev      # playground at localhost:5173
-npm run build    # typecheck + bundle
+npm run dev        # playground at localhost:5173
+npm run build      # typecheck + bundle the playground
+npm run build:lib  # bundle the library to lib/ (ESM + CJS + types)
 ```
 
-Not on npm yet — the engine lives in `src/engine.ts` and the playground
-(`src/main.ts`, `index.html`) is a thin consumer of its public API.
+The engine lives in `src/engine.ts`; the playground (`src/main.ts`,
+`index.html`) is a thin consumer of its public API. Only the engine is
+published — `build:lib` runs automatically before `npm publish`.
 
 ## License
 
