@@ -442,7 +442,32 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
   const l = lights[i];
   const d = orbitRadius(kind);
   const yaw0 = l.yaw * Math.PI / 180;
-  const N = 96;
+  const N = 192; // fine enough that the meridian notch can't slip between samples
+  // Where the yaw dial passes in FRONT of the meridian on screen, the
+  // meridian stroke yields (a small notch each side) so the dial reads on
+  // top — the rings never meet in 3D (different radii), pure draw courtesy
+  let maskPts: Array<{ x: number; y: number }> | null = null;
+  if (kind === 'pitch') {
+    maskPts = [];
+    const dm = orbitRadius('yaw');
+    for (let k = 0; k < 256; k++) {
+      const a = (k / 256) * 2 * Math.PI;
+      const mx = Math.cos(a) * dm;
+      const my = Math.sin(a) * YAW_TILT_S * dm;
+      const mz = Math.sin(a) * YAW_TILT_C * dm;
+      if (mz >= 0) continue; // only the dial's FRONT half masks — where it truly passes in front
+      if (engine.isPointOccluded(mx, my, mz)) continue;
+      const mp = engine.worldToScreen(mx, my, mz);
+      if (mp.z > 0.5) maskPts.push({ x: mp.x, y: mp.y });
+    }
+  }
+  const nearOtherRing = (x: number, y: number) => {
+    if (!maskPts) return false;
+    for (const m of maskPts) {
+      if ((m.x - x) * (m.x - x) + (m.y - y) * (m.y - y) < 36) return true; // ~6px
+    }
+    return false;
+  };
   let visD = '', hidD = '', hitD = '', pv = false, ph = false, pt2 = false;
   for (let k = 0; k <= N; k++) {
     const a = (k / N) * 2 * Math.PI;
@@ -473,6 +498,7 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     if (inCanvas) { hitD += (pt2 ? 'L' : 'M') + pt; pt2 = true; }
     else pt2 = false;
     if (engine.isPointOccluded(wx, wy, wz)) { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
+    else if (wz < 0 && nearOtherRing(p.x, p.y)) { pv = false; ph = false; } // front half yields to the crossing dial
     else { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
   }
   if (hidD) {
@@ -507,6 +533,8 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     const p0 = engine.worldToScreen(ux * d, uy * d, uz * d);
     const p1 = engine.worldToScreen(ux * (d + len), uy * (d + len), uz * (d + len));
     if (p0.z <= 0.5 || p1.z <= 0.5) continue;
+    // ticks honor the crossing notch too (front half only, like the stroke)
+    if (uz < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
     tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
   }
   if (tickD) {
