@@ -359,39 +359,19 @@ function updateGizmo() {
   const type = lights[i].type;
   {
     // Aim line from the light to where its ray meets the sphere's surface.
-    // Sampled in 3D and split into visible / sphere-occluded portions.
     const lx = lightPositions[i * 3], ly = lightPositions[i * 3 + 1], lz = lightPositions[i * 3 + 2];
     const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
     const s = state.sphereRadius / llen;
     const ex = lx * s, ey = ly * s, ez = lz * s;
     const N = 32;
-    let visD = '', hidD = '', pv = false, ph = false;
+    const sp = pathSplitter(false);
     for (let k = 0; k <= N; k++) {
       const t = k / N;
-      const wx = lx + (ex - lx) * t;
-      const wy = ly + (ey - ly) * t;
-      const wz = lz + (ez - lz) * t;
-      const hidden = engine.isPointOccluded(wx, wy, wz);
-      const p = engine.worldToScreen(wx, wy, wz);
-      const pt = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
-      if (!hidden) { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
-      else { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
+      sp.add(lx + (ex - lx) * t, ly + (ey - ly) * t, lz + (ez - lz) * t);
     }
-    if (hidD) {
-      const hid = document.createElementNS(NS, 'path');
-      hid.setAttribute('d', hidD);
-      hid.setAttribute('class', 'gizmo-line--hidden');
-      gizmoSvg.appendChild(hid);
-    }
-    if (visD) {
-      for (const [width, cls] of [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']] as const) {
-        const path = document.createElementNS(NS, 'path');
-        path.setAttribute('d', visD);
-        path.setAttribute('stroke-width', width);
-        path.setAttribute('class', cls);
-        gizmoSvg.appendChild(path);
-      }
-    }
+    const { vis, hid } = sp.paths();
+    if (hid) appendPaths(NS, hid, [['', 'gizmo-line--hidden']]);
+    if (vis) appendPaths(NS, vis, [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']]);
   }
   if (type === 'area' && lights[i].size > 0) {
     const r = (lights[i].size / (screenPos.z * engine.tanFov())) * (canvas.height / 2);
@@ -420,24 +400,58 @@ function updateGizmo() {
 // fixed radii — the meridian tighter so the rings never read as one ellipse
 const orbitRadius = (kind: 'yaw' | 'pitch') => state.sphereRadius + (kind === 'yaw' ? 0.5 : 0.28);
 
+function ringWorld(kind: 'yaw' | 'pitch', aRad: number, yawRad: number, d: number) {
+  return kind === 'yaw'
+    ? { x: Math.cos(aRad) * d, y: Math.sin(aRad) * YAW_TILT_S * d, z: Math.sin(aRad) * YAW_TILT_C * d }
+    : { x: Math.cos(aRad) * Math.cos(yawRad) * d, y: Math.sin(aRad) * d, z: Math.cos(aRad) * Math.sin(yawRad) * d };
+}
+
+function pathSplitter(withHit: boolean) {
+  let vis = '', hid = '', hit = '', pv = false, ph = false, pt = false;
+  return {
+    add(wx: number, wy: number, wz: number, veto?: (sx: number, sy: number) => boolean) {
+      const p = engine.worldToScreen(wx, wy, wz);
+      if (p.z <= 0.5) {
+        pv = ph = pt = false;
+        return;
+      }
+      const seg = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
+      if (withHit) {
+        if (p.x >= -24 && p.x <= canvas.width + 24 && p.y >= -24 && p.y <= canvas.height + 24) {
+          hit += (pt ? 'L' : 'M') + seg;
+          pt = true;
+        } else pt = false;
+      }
+      if (engine.isPointOccluded(wx, wy, wz)) { hid += (ph ? 'L' : 'M') + seg; ph = true; pv = false; }
+      else if (veto?.(p.x, p.y)) { pv = false; ph = false; }
+      else { vis += (pv ? 'L' : 'M') + seg; pv = true; ph = false; }
+    },
+    paths: () => ({ vis, hid, hit }),
+  };
+}
+
+function appendPaths(NS: string, d: string, styles: ReadonlyArray<readonly [string, string]>) {
+  for (const [width, cls] of styles) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    if (width) path.setAttribute('stroke-width', width);
+    path.setAttribute('class', cls);
+    gizmoSvg.appendChild(path);
+  }
+}
+
 function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
-  const l = lights[i];
   const d = orbitRadius(kind);
-  const yaw0 = l.yaw * Math.PI / 180;
-  const N = 192; // fine enough that the meridian notch can't slip between samples
+  const yawRad = lights[i].yaw * Math.PI / 180;
   // the dial's front half notches the meridian where they cross on screen
   let maskPts: Array<{ x: number; y: number }> | null = null;
   if (kind === 'pitch') {
     maskPts = [];
     const dm = orbitRadius('yaw');
     for (let k = 0; k < 256; k++) {
-      const a = (k / 256) * 2 * Math.PI;
-      const mx = Math.cos(a) * dm;
-      const my = Math.sin(a) * YAW_TILT_S * dm;
-      const mz = Math.sin(a) * YAW_TILT_C * dm;
-      if (mz >= 0) continue;
-      if (engine.isPointOccluded(mx, my, mz)) continue;
-      const mp = engine.worldToScreen(mx, my, mz);
+      const m = ringWorld('yaw', (k / 256) * 2 * Math.PI, yawRad, dm);
+      if (m.z >= 0 || engine.isPointOccluded(m.x, m.y, m.z)) continue;
+      const mp = engine.worldToScreen(m.x, m.y, m.z);
       if (mp.z > 0.5) maskPts.push({ x: mp.x, y: mp.y });
     }
   }
@@ -448,66 +462,26 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     }
     return false;
   };
-  let visD = '', hidD = '', hitD = '', pv = false, ph = false, pt2 = false;
+  const N = 192; // fine enough that the meridian notch can't slip between samples
+  const sp = pathSplitter(true);
   for (let k = 0; k <= N; k++) {
-    const a = (k / N) * 2 * Math.PI;
-    let wx: number, wy: number, wz: number;
-    if (kind === 'yaw') {
-      // tilted out of the level plane — dead level projects to an unreadable line
-      wx = Math.cos(a) * d;
-      wy = Math.sin(a) * YAW_TILT_S * d;
-      wz = Math.sin(a) * YAW_TILT_C * d;
-    } else {
-      // meridian: great circle through the poles in the light's yaw plane
-      wx = Math.cos(a) * Math.cos(yaw0) * d;
-      wy = Math.sin(a) * d;
-      wz = Math.cos(a) * Math.sin(yaw0) * d;
-    }
-    const p = engine.worldToScreen(wx, wy, wz);
-    if (p.z <= 0.5) { // behind (or grazing) the camera plane: break subpaths
-      pv = ph = pt2 = false;
-      continue;
-    }
-    const pt = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
-    // the visible ring may overflow the canvas; the grabbable stroke must not
-    const inCanvas = p.x >= -24 && p.x <= canvas.width + 24 && p.y >= -24 && p.y <= canvas.height + 24;
-    if (inCanvas) { hitD += (pt2 ? 'L' : 'M') + pt; pt2 = true; }
-    else pt2 = false;
-    if (engine.isPointOccluded(wx, wy, wz)) { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
-    else if (wz < 0 && nearOtherRing(p.x, p.y)) { pv = false; ph = false; }
-    else { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
+    const w = ringWorld(kind, (k / N) * 2 * Math.PI, yawRad, d);
+    sp.add(w.x, w.y, w.z, w.z < 0 ? nearOtherRing : undefined);
   }
-  if (hidD) {
-    const hid = document.createElementNS(NS, 'path');
-    hid.setAttribute('d', hidD);
-    hid.setAttribute('class', 'gizmo-line--hidden');
-    gizmoSvg.appendChild(hid);
-  }
-  if (visD) {
-    // Solid in front — draggable geometry, same stroke as the sampling shapes
-    for (const [width, cls] of [['3', 'shape-path-casing'], ['1.5', 'shape-path']] as const) {
-      const path = document.createElementNS(NS, 'path');
-      path.setAttribute('d', visD);
-      path.setAttribute('stroke-width', width);
-      path.setAttribute('class', cls);
-      gizmoSvg.appendChild(path);
-    }
-  }
+  const { vis, hid, hit: hitD } = sp.paths();
+  if (hid) appendPaths(NS, hid, [['', 'gizmo-line--hidden']]);
+  if (vis) appendPaths(NS, vis, [['3', 'shape-path-casing'], ['1.5', 'shape-path']]);
   let tickD = '';
   for (let deg = 0; deg < 360; deg += 10) {
-    const a = deg * Math.PI / 180;
-    let ux: number, uy: number, uz: number;
-    if (kind === 'yaw') {
-      ux = Math.cos(a); uy = Math.sin(a) * YAW_TILT_S; uz = Math.sin(a) * YAW_TILT_C;
-    } else {
-      ux = Math.cos(a) * Math.cos(yaw0); uy = Math.sin(a); uz = Math.cos(a) * Math.sin(yaw0);
-    }
-    if (engine.isPointOccluded(ux * d, uy * d, uz * d)) continue;
+    const aRad = deg * Math.PI / 180;
+    const base = ringWorld(kind, aRad, yawRad, d);
+    if (engine.isPointOccluded(base.x, base.y, base.z)) continue;
     const len = deg % 45 === 0 ? 0.13 : 0.055;
-    const p0 = engine.worldToScreen(ux * d, uy * d, uz * d);
-    const p1 = engine.worldToScreen(ux * (d + len), uy * (d + len), uz * (d + len));
+    const tip = ringWorld(kind, aRad, yawRad, d + len);
+    const p0 = engine.worldToScreen(base.x, base.y, base.z);
+    const p1 = engine.worldToScreen(tip.x, tip.y, tip.z);
     if (p0.z <= 0.5 || p1.z <= 0.5) continue;
-    if (uz < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
+    if (base.z < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
     tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
   }
   if (tickD) {
@@ -544,14 +518,8 @@ gizmoSvg.addEventListener('pointerdown', e => {
     ? lights[li].yaw
     : (Math.abs(angDelta(lights[li].yaw, planeYaw)) <= 90 ? lights[li].pitch : 180 - lights[li].pitch);
   const ringPoint = (aDeg: number) => {
-    const a = aDeg * Math.PI / 180;
-    const d = orbitRadius(orbit);
-    return orbit === 'yaw'
-      ? engine.worldToScreen(Math.cos(a) * d, Math.sin(a) * YAW_TILT_S * d, Math.sin(a) * YAW_TILT_C * d)
-      : engine.worldToScreen(
-          Math.cos(a) * Math.cos(planeYaw * Math.PI / 180) * d,
-          Math.sin(a) * d,
-          Math.cos(a) * Math.sin(planeYaw * Math.PI / 180) * d);
+    const w = ringWorld(orbit, aDeg * Math.PI / 180, planeYaw * Math.PI / 180, orbitRadius(orbit));
+    return engine.worldToScreen(w.x, w.y, w.z);
   };
   // drag model by projected shape: fat ellipse — bearing-tracking around the
   // center; slim / edge-on — linear tangent spin (bearings degenerate there)
