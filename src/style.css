@@ -47,6 +47,7 @@ body {
   margin: 0;
   font-size: 1rem;
   min-height: 100vh;
+  min-height: 100dvh; /* mobile URL bars: the vh fallback stays above */
   display: flex;
   flex-direction: column;
 }
@@ -1398,6 +1399,112 @@ select {
   height: .95rem;
   flex-shrink: 0;
   display: block;
+}
+
+/* ---------------------------------------------------------------- touch & small screens */
+
+/* Dragging on the scene must never scroll the page */
+.viewport,
+.light-marker,
+.sample-marker,
+.shape-handle {
+  touch-action: none;
+}
+
+.viewport {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* No double-tap-zoom delay on the chrome */
+.button,
+.seg__btn,
+select {
+  touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+  /* Finger-sized invisible halos around the grabbable dots, same trick as
+     .shape-handle::after */
+  .light-marker::after,
+  .sample-marker::after {
+    content: '';
+    position: absolute;
+    inset: -12px;
+    border-radius: 50%;
+  }
+
+  .shape-handle::after {
+    inset: -12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .l-wrap {
+    /* room for the rails protruding var(--s-square) past each side */
+    padding: 0.75rem var(--s-square) 0.25rem;
+  }
+
+  .l-main {
+    width: 100%; /* the 74vmin cap starves portrait phones */
+  }
+
+  .menu__brand {
+    display: none; /* makes room for the tool cells in one row */
+  }
+
+  /* Drawers slide OVER the canvas — a phone has no page margins for the
+     desktop slide-out — and the workspace stays put. Tapping the rail or
+     empty drawer space still closes them. */
+  .l-overlay {
+    width: 100%;
+  }
+
+  body.colors-open .l-overlay--left {
+    z-index: 4; /* above canvas (1), gizmo (2) and markers (3) */
+    transform: translateX(calc(var(--s-square) - var(--s-line)));
+  }
+
+  body.controls-open .l-overlay--right {
+    z-index: 4;
+    transform: translateX(calc(-1 * var(--s-square) + var(--s-line)));
+  }
+
+  body.colors-open .l-main,
+  body.controls-open .l-main {
+    transform: none;
+  }
+
+  /* The palette title/close cells park in page margin space that doesn't
+     exist here; the rail tap is the close affordance instead */
+  body.colors-open .menu--overlay {
+    display: none;
+  }
+
+  .hints {
+    font-size: 0.7rem;
+    min-width: 0;
+  }
+
+  .footer {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Touch devices: swap the mouse/keyboard cheat sheet for a touch one */
+.hints--touch {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .hints--keys {
+    display: none;
+  }
+
+  .hints--touch {
+    display: block;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

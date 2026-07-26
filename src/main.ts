@@ -979,6 +979,7 @@ const scn = {
   wallColor: document.getElementById('scnWallColor') as HTMLInputElement,
   radius: document.getElementById('scnRadius') as HTMLInputElement,
   fov: document.getElementById('scnFov') as HTMLInputElement,
+  camera: document.getElementById('scnCamera') as HTMLInputElement,
   indirect: document.getElementById('scnIndirect') as HTMLInputElement,
   reflect: document.getElementById('scnReflect') as HTMLInputElement,
   quality: document.getElementById('scnQuality') as HTMLInputElement,
@@ -989,6 +990,7 @@ function readSceneInputs() {
   state.wallHex = scn.wallColor.value;
   state.sphereRadius = parseFloat(scn.radius.value);
   state.fov = parseFloat(scn.fov.value);
+  state.cameraZ = parseFloat(scn.camera.value);
   state.indirect = parseFloat(scn.indirect.value);
   const rv = parseFloat(scn.reflect.value);
   state.wallReflect.back = rv;
@@ -1049,6 +1051,7 @@ function syncSceneInputs() {
   scn.wallColor.value = state.wallHex;
   scn.radius.value = String(state.sphereRadius);
   scn.fov.value = String(state.fov);
+  scn.camera.value = String(state.cameraZ);
   scn.indirect.value = String(state.indirect);
   scn.reflect.value = String(Math.max(state.wallReflect.back, state.wallReflect.left, state.wallReflect.right, state.wallReflect.top, state.wallReflect.bottom));
   scn.quality.value = String(state.areaQuality);
@@ -1620,6 +1623,9 @@ lightLayer.addEventListener('wheel', e => {
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   state.cameraZ = Math.min(-2, Math.max(-10, state.cameraZ - e.deltaY * 0.005));
+  // keep the drawer's dolly slider honest
+  scn.camera.value = String(state.cameraZ);
+  syncOutputs();
   update();
 }, { passive: false });
 
