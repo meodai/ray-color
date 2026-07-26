@@ -434,12 +434,13 @@ function updateGizmo() {
 // makes the whole ring grabbable.
 // The rings are a fixed-size control gadget hugging the sphere — their
 // radius never follows the light's distance; the dashed beam bridges from
-// the gadget out to wherever the light actually sits.
-const orbitRadius = () => state.sphereRadius + 0.5;
+// the gadget out to wherever the light actually sits. The meridian sits
+// tighter than the yaw dial so the two never read as one ellipse.
+const orbitRadius = (kind: 'yaw' | 'pitch') => state.sphereRadius + (kind === 'yaw' ? 0.5 : 0.28);
 
 function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
   const l = lights[i];
-  const d = orbitRadius();
+  const d = orbitRadius(kind);
   const yaw0 = l.yaw * Math.PI / 180;
   const N = 96;
   let visD = '', hidD = '', hitD = '', pv = false, ph = false, pt2 = false;
@@ -553,7 +554,7 @@ gizmoSvg.addEventListener('pointerdown', e => {
     : (Math.abs(angDelta(lights[li].yaw, planeYaw)) <= 90 ? lights[li].pitch : 180 - lights[li].pitch);
   const ringPoint = (aDeg: number) => {
     const a = aDeg * Math.PI / 180;
-    const d = orbitRadius();
+    const d = orbitRadius(orbit);
     return orbit === 'yaw'
       ? engine.worldToScreen(Math.cos(a) * d, Math.sin(a) * YAW_TILT_S * d, Math.sin(a) * YAW_TILT_C * d)
       : engine.worldToScreen(
@@ -1023,6 +1024,8 @@ function shapeHandlePoints(): Array<{ role: 'a' | 'b' | 'r'; sx: number; sy: num
 // unless the press lands near an existing handle, which edits it instead
 canvas.addEventListener('pointerdown', e => {
   if (mode === 'points') return;
+  // Taking hold of the sampling shape hands the stage back from the light
+  if (selectedLight >= 0) closeInspector();
   const p = eventToCanvasPixels(e.clientX, e.clientY);
   const GRAB_RADIUS = 14; // canvas px — forgiving, so grabs never redraw by accident
   for (const h of shapeHandlePoints()) {
@@ -1084,6 +1087,7 @@ shapeHandles.addEventListener('pointerdown', e => {
   if (!el || !shape) return;
   e.preventDefault();
   e.stopPropagation();
+  if (selectedLight >= 0) closeInspector();
   beginHandleDrag(e, el.dataset.handle as 'a' | 'b' | 'r');
 });
 
@@ -1942,6 +1946,7 @@ function createSampleAt(dir: Float64Array) {
 function beginSampleDrag(event: PointerEvent, sample: Sample) {
   event.preventDefault();
   event.stopPropagation();
+  if (selectedLight >= 0) closeInspector();
   selectSample(sample);
   beginSurfaceDrag(event, sample.dir, () => {
     const color = engine.shade(sample.dir);
