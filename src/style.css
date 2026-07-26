@@ -177,6 +177,7 @@ body {
   white-space: nowrap;
   opacity: 0;
   transform: translateX(2rem);
+  margin-left: 0;
   margin-right: 0.6rem;
   transition: opacity 0.1s linear, transform 0.2s cubic-bezier(0.3, 0.7, 0, 1);
 }
