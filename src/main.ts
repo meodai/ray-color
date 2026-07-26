@@ -504,20 +504,19 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     }
     if (engine.isPointOccluded(ux * d, uy * d, uz * d)) continue;
     const len = deg % 45 === 0 ? 0.13 : 0.055;
-    const gap = 0.045; // breathing room between the ring stroke and its ticks
-    const p0 = engine.worldToScreen(ux * (d + gap), uy * (d + gap), uz * (d + gap));
-    const p1 = engine.worldToScreen(ux * (d + gap + len), uy * (d + gap + len), uz * (d + gap + len));
+    const p0 = engine.worldToScreen(ux * d, uy * d, uz * d);
+    const p1 = engine.worldToScreen(ux * (d + len), uy * (d + len), uz * (d + len));
     if (p0.z <= 0.5 || p1.z <= 0.5) continue;
     tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
   }
   if (tickD) {
-    for (const [width, cls] of [['2.5', 'shape-path-casing'], ['1', 'shape-path']] as const) {
-      const ticks = document.createElementNS(NS, 'path');
-      ticks.setAttribute('d', tickD);
-      ticks.setAttribute('stroke-width', width);
-      ticks.setAttribute('class', cls);
-      gizmoSvg.appendChild(ticks);
-    }
+    const ticks = document.createElementNS(NS, 'path') as SVGPathElement;
+    ticks.setAttribute('d', tickD);
+    // inline style: the class CSS carries its own stroke-width, which
+    // beats the presentation attribute
+    ticks.style.strokeWidth = '0.6';
+    ticks.setAttribute('class', 'shape-path');
+    gizmoSvg.appendChild(ticks);
   }
   if (hitD) {
     const hit = document.createElementNS(NS, 'path') as SVGPathElement;
