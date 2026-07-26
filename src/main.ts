@@ -309,10 +309,7 @@ function updateLightMarkers() {
     }
     el.classList.toggle('control-rail__light--active', i === selectedLight);
   });
-  // While a light is being edited, the sampling layers step back visually
   document.body.classList.toggle('light-editing', selectedLight >= 0);
-  // Grips for the selected light, in the circle-shape's handle language:
-  // a round grip on the intensity ring, a square bead on the aim line
   if (selectedLight >= 0) {
     const i = selectedLight;
     const sp = engine.worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
@@ -334,11 +331,7 @@ function updateLightMarkers() {
         const ga = -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
         addGrip('intensity', sp.x + Math.cos(ga) * r, sp.y + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
       }
-      // The distance bead never leaves the canvas: when its true spot (or the
-      // whole beam) is outside, it clamps to the edge and works as a remote —
-      // same idea as the edge-clamped light markers. Drag stays relative, so
-      // grabbing the remote never snaps the value. For directional lights
-      // dist is cosmetic (it places the marker) but the handle behaves the same.
+      // edge-clamped as a remote when the beam leaves the canvas
       const b = beadWorld(i);
       const bp = engine.worldToScreen(b.x, b.y, b.z);
       let bx = bp.x, by = bp.y;
@@ -357,9 +350,7 @@ function updateGizmo() {
   if (selectedLight < 0) return;
   const i = selectedLight;
   const NS = 'http://www.w3.org/2000/svg';
-  // The rings hug the sphere, so they stay projectable even when the light
-  // itself is off-canvas or behind the camera — they're then the only way
-  // to steer it back, so they always draw
+  // rings stay drawable even when the light is off-canvas or behind the camera
   drawOrbit('yaw', i, NS);
   drawOrbit('pitch', i, NS);
   const screenPos = engine.worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
@@ -411,8 +402,6 @@ function updateGizmo() {
     circle.setAttribute('class', 'gizmo-area');
     gizmoSvg.appendChild(circle);
   }
-  // Intensity ring: the light's own resize-circle, dragged by its grip the
-  // way the sampling circle's radius grip works
   if (cx === screenPos.x && cy === screenPos.y) {
     const r = intensityRingRadius(lights[i].intensity);
     for (const [width, cls] of [['3', 'shape-path-casing'], ['1.5', 'shape-path']] as const) {
@@ -428,14 +417,7 @@ function updateGizmo() {
   }
 }
 
-// The selected light's two orbits at true scale — the parallel (drag = yaw)
-// and the meridian (drag = pitch) — sampled in 3D and split into visible /
-// sphere-shaded portions like the aim line. A wide transparent twin path
-// makes the whole ring grabbable.
-// The rings are a fixed-size control gadget hugging the sphere — their
-// radius never follows the light's distance; the dashed beam bridges from
-// the gadget out to wherever the light actually sits. The meridian sits
-// tighter than the yaw dial so the two never read as one ellipse.
+// fixed radii — the meridian tighter so the rings never read as one ellipse
 const orbitRadius = (kind: 'yaw' | 'pitch') => state.sphereRadius + (kind === 'yaw' ? 0.5 : 0.28);
 
 function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
@@ -443,9 +425,7 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
   const d = orbitRadius(kind);
   const yaw0 = l.yaw * Math.PI / 180;
   const N = 192; // fine enough that the meridian notch can't slip between samples
-  // Where the yaw dial passes in FRONT of the meridian on screen, the
-  // meridian stroke yields (a small notch each side) so the dial reads on
-  // top — the rings never meet in 3D (different radii), pure draw courtesy
+  // the dial's front half notches the meridian where they cross on screen
   let maskPts: Array<{ x: number; y: number }> | null = null;
   if (kind === 'pitch') {
     maskPts = [];
@@ -455,7 +435,7 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
       const mx = Math.cos(a) * dm;
       const my = Math.sin(a) * YAW_TILT_S * dm;
       const mz = Math.sin(a) * YAW_TILT_C * dm;
-      if (mz >= 0) continue; // only the dial's FRONT half masks — where it truly passes in front
+      if (mz >= 0) continue;
       if (engine.isPointOccluded(mx, my, mz)) continue;
       const mp = engine.worldToScreen(mx, my, mz);
       if (mp.z > 0.5) maskPts.push({ x: mp.x, y: mp.y });
@@ -473,9 +453,7 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     const a = (k / N) * 2 * Math.PI;
     let wx: number, wy: number, wz: number;
     if (kind === 'yaw') {
-      // yaw dial: a great circle centered on the sphere, tilted a little out
-      // of the camera's level plane — dead level it projects to a line and
-      // front/back become unreadable. Front dips below, back rises.
+      // tilted out of the level plane — dead level projects to an unreadable line
       wx = Math.cos(a) * d;
       wy = Math.sin(a) * YAW_TILT_S * d;
       wz = Math.sin(a) * YAW_TILT_C * d;
@@ -491,14 +469,12 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
       continue;
     }
     const pt = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
-    // The visible rings may overflow the canvas (the gizmo layer shows them),
-    // but the grabbable stroke stays inside it so it never sits invisibly
-    // over the rails or the footer
+    // the visible ring may overflow the canvas; the grabbable stroke must not
     const inCanvas = p.x >= -24 && p.x <= canvas.width + 24 && p.y >= -24 && p.y <= canvas.height + 24;
     if (inCanvas) { hitD += (pt2 ? 'L' : 'M') + pt; pt2 = true; }
     else pt2 = false;
     if (engine.isPointOccluded(wx, wy, wz)) { hidD += (ph ? 'L' : 'M') + pt; ph = true; pv = false; }
-    else if (wz < 0 && nearOtherRing(p.x, p.y)) { pv = false; ph = false; } // front half yields to the crossing dial
+    else if (wz < 0 && nearOtherRing(p.x, p.y)) { pv = false; ph = false; }
     else { visD += (pv ? 'L' : 'M') + pt; pv = true; ph = false; }
   }
   if (hidD) {
@@ -517,8 +493,6 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
       gizmoSvg.appendChild(path);
     }
   }
-  // Dial ticks: radial marks, longer at the quarters — only where
-  // the ring itself is visible (occluded and behind-camera stretches stay clean)
   let tickD = '';
   for (let deg = 0; deg < 360; deg += 10) {
     const a = deg * Math.PI / 180;
@@ -533,7 +507,6 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
     const p0 = engine.worldToScreen(ux * d, uy * d, uz * d);
     const p1 = engine.worldToScreen(ux * (d + len), uy * (d + len), uz * (d + len));
     if (p0.z <= 0.5 || p1.z <= 0.5) continue;
-    // ticks honor the crossing notch too (front half only, like the stroke)
     if (uz < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
     tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
   }
@@ -556,13 +529,7 @@ function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
   }
 }
 
-// Drag anywhere on an orbit: same sphere math as the marker drag, but
-// constrained to one ring — the equator steers yaw, the meridian pitch.
-// Both hemisphere solutions are considered every move and the one continuous
-// with the light's current direction wins, so the cursor can roll the light
-// across the silhouette onto the back of its orbit and keep going.
 const angDelta = (a: number, b: number) => ((a - b + 540) % 360) - 180;
-// Yaw dial inclination (see drawOrbit): enough to read front vs back
 const YAW_TILT_S = Math.sin(10 * Math.PI / 180);
 const YAW_TILT_C = Math.cos(10 * Math.PI / 180);
 
@@ -571,11 +538,8 @@ gizmoSvg.addEventListener('pointerdown', e => {
   if (!orbit || selectedLight < 0) return;
   e.preventDefault();
   const li = selectedLight;
-  // The meridian's PLANE is fixed for the whole drag: the light may flip to
-  // planeYaw + 180 while rolling around the back, same plane either way
+  // fixed for the whole drag; the light may flip to planeYaw + 180 on the far half
   const planeYaw = lights[li].yaw;
-  // Ring parameter of the light right now: equator param = yaw; meridian
-  // param = pitch on the planeYaw half, 180 - pitch on the far half
   let aCur = orbit === 'yaw'
     ? lights[li].yaw
     : (Math.abs(angDelta(lights[li].yaw, planeYaw)) <= 90 ? lights[li].pitch : 180 - lights[li].pitch);
@@ -589,15 +553,8 @@ gizmoSvg.addEventListener('pointerdown', e => {
           Math.sin(a) * d,
           Math.cos(a) * Math.sin(planeYaw * Math.PI / 180) * d);
   };
-  // Two drag models, matching how DCC rotate-gizmos do it, chosen by the
-  // ring's PROJECTED shape (not by which ring it is):
-  // - Fat ellipse: ANGULAR dragging around the sphere's projected center.
-  //   Every bearing meets the ring once, so the light tracks the cursor's
-  //   bearing all the way around with no front/back ambiguity.
-  // - Slim / edge-on (the tilted yaw dial always; the meridian when its
-  //   plane faces the camera edge-on at yaw ≈ ±90°): bearings degenerate,
-  //   so it spins linearly along its grab-time tangent, like turning a
-  //   globe — constant rate, no dead spots.
+  // drag model by projected shape: fat ellipse — bearing-tracking around the
+  // center; slim / edge-on — linear tangent spin (bearings degenerate there)
   const center = engine.worldToScreen(0, 0, 0);
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, anyPt = false;
   for (let a = 0; a < 360; a += 15) {
@@ -622,7 +579,6 @@ gizmoSvg.addEventListener('pointerdown', e => {
       if (tl > 2) { spinX = tx / tl; spinY = ty / tl; break; }
     }
   }
-  // linear spin rate: dragging one projected ring radius sweeps ~90°
   let ringR = 1;
   for (const a of [0, 45, 90, 135]) {
     const p0 = ringPoint(a), p1 = ringPoint(a + 180);
@@ -630,9 +586,7 @@ gizmoSvg.addEventListener('pointerdown', e => {
   }
   const rate = 90 / ringR;
   let prev = eventToCanvasPixels(e.clientX, e.clientY, false);
-  // RELATIVE in both modes — grabbing never snaps the light to the grab
-  // point. Angular mode accumulates the cursor's bearing CHANGES onto the
-  // light's own bearing.
+  // relative in both modes: grabbing never snaps the light to the grab point
   let thetaPrev = Math.atan2(prev.y - center.y, prev.x - center.x) * 180 / Math.PI;
   let targetBearing: number | null = null;
   const move = (ev: PointerEvent) => {
@@ -643,8 +597,6 @@ gizmoSvg.addEventListener('pointerdown', e => {
       if (targetBearing === null) targetBearing = ringAngle(aCur);
       targetBearing += angDelta(theta, thetaPrev);
       thetaPrev = theta;
-      // walk the ring param to the bearing target, searched incrementally
-      // from the current one so front/back stay unambiguous
       let bestA = aCur, bestErr = Infinity;
       for (let off = -90; off <= 90; off += 1) {
         const a = aCur + off;
@@ -662,9 +614,7 @@ gizmoSvg.addEventListener('pointerdown', e => {
     if (orbit === 'yaw') {
       l.yaw = Math.round(angDelta(aCur, 0));
     } else {
-      // Full meridian travel: past a pole the light continues down the far
-      // side of the SAME plane — yaw snaps strictly to planeYaw or its
-      // opposite, never anything between, so there's no sideways drift
+      // past a pole the light continues on the far half of the same plane
       const pitch = Math.asin(Math.sin(aCur * Math.PI / 180)) * 180 / Math.PI;
       l.yaw = Math.round(angDelta(Math.cos(aCur * Math.PI / 180) >= 0 ? planeYaw : planeYaw + 180, 0));
       l.pitch = Math.round(Math.max(-89, Math.min(89, pitch)));
@@ -680,9 +630,7 @@ gizmoSvg.addEventListener('pointerdown', e => {
   window.addEventListener('pointerup', up);
 });
 
-// The ring maps intensity asymptotically (x / (x + 1)) instead of linearly:
-// every intensity — including preset values beyond the inspector slider's
-// range — has a radius, and dragging never snap-clamps the stored value.
+// asymptotic (x / (x + 1)): any intensity has a radius, dragging never snap-clamps
 const INT_R0 = 16;   // ring radius at intensity 0
 const INT_R1 = 36;   // additional radius as intensity -> inf
 const INT_MAX = 19;  // hard ceiling when dragging the grip outward
@@ -691,9 +639,6 @@ function intensityRingRadius(intensity: number) {
   return INT_R0 + INT_R1 * (intensity / (intensity + 1));
 }
 
-// The distance bead rides the aim line halfway between the light and the
-// sphere's surface — its world point stays well inside the camera plane for
-// every reachable dist, so the projection below never degenerates
 const BEAD_F = 0.5;
 
 function beadWorld(i: number) {
@@ -1051,7 +996,6 @@ function shapeHandlePoints(): Array<{ role: 'a' | 'b' | 'r'; sx: number; sy: num
 // unless the press lands near an existing handle, which edits it instead
 canvas.addEventListener('pointerdown', e => {
   if (mode === 'points') return;
-  // Taking hold of the sampling shape hands the stage back from the light
   if (selectedLight >= 0) closeInspector();
   const p = eventToCanvasPixels(e.clientX, e.clientY);
   const GRAB_RADIUS = 14; // canvas px — forgiving, so grabs never redraw by accident
@@ -1274,9 +1218,6 @@ function closeInspector() {
   updateLightMarkers();
 }
 
-// Tap-select from the canvas: the light grows its spherical controls
-// (intensity ring + distance bead) in place. The full inspector stays a
-// rail button or 1/2/3 away; if the drawer is already open, keep it synced.
 function selectLight(i: number) {
   sound.playTack();
   selectedLight = i;
@@ -1290,11 +1231,6 @@ function beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
   e.stopPropagation();
   const li = selectedLight;
 
-  // Distance drags are RELATIVE along the beam: the geometry is fixed at
-  // grab time (the light's direction doesn't change during a dist drag) and
-  // the offset between grab point and bead is preserved — so grabbing the
-  // bead, even edge-clamped as a remote for an off-canvas beam, never snaps
-  // the value.
   let distDrag: { uOf: (x: number, y: number) => number; solve: (u: number) => number; uOffset: number } | null = null;
   if (kind === 'dist') {
     const lx = lightPositions[li * 3], ly = lightPositions[li * 3 + 1], lz = lightPositions[li * 3 + 2];
@@ -1304,12 +1240,10 @@ function beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
       const s = BEAD_F * state.sphereRadius + (1 - BEAD_F) * d;
       return engine.worldToScreen(dx * s, dy * s, dz * s);
     };
-    // A camera-facing beam with the camera dollied in can push the far
-    // endpoint's bead behind the camera plane, corrupting the projection —
-    // cap the searchable distance so every sample stays in front
+    // cap so no search sample projects from behind the camera
     let hiCap = MAX_LIGHT_DISTANCE;
     if (dz < 0) {
-      const sLim = (state.cameraZ + 0.75) / dz; // bead radial dist where z hits the camera margin
+      const sLim = (state.cameraZ + 0.75) / dz;
       const dLim = (sLim - BEAD_F * state.sphereRadius) / (1 - BEAD_F);
       hiCap = Math.max(state.sphereRadius, Math.min(hiCap, dLim));
     }
@@ -1320,8 +1254,7 @@ function beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
     const abLen = Math.sqrt(ab2);
     const uOf = (x: number, y: number) =>
       Math.max(0, Math.min(1, ((x - A.x) * abx + (y - A.y) * aby) / ab2));
-    // The bead's screen path is a straight line, monotone in dist, so
-    // binary search converges cleanly
+    // the bead's screen path is a line, monotone in dist
     const solve = (u: number) => {
       const target = u * abLen;
       let lo = state.sphereRadius, hi = hiCap;
@@ -1345,7 +1278,6 @@ function beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
     if (kind === 'intensity') {
       const sp = engine.worldToScreen(lightPositions[li * 3], lightPositions[li * 3 + 1], lightPositions[li * 3 + 2]);
       const r = Math.hypot(p.x - sp.x, p.y - sp.y);
-      // invert the asymptotic ring mapping (see intensityRingRadius)
       const x = Math.max(0, Math.min(INT_MAX / (INT_MAX + 1), (r - INT_R0) / INT_R1));
       l.intensity = Math.round((x / (1 - x)) * 100) / 100;
       inspIntensity.value = l.intensity.toString();
@@ -2000,9 +1932,6 @@ lightLayer.addEventListener('pointerdown', e => {
   draggedLight = parseInt(markerEl.dataset.light, 10);
   dragMoved = false;
   const li = draggedLight;
-  // Marker drags ARE the circle-center drag: the same relative surface
-  // trackball (beginSurfaceDrag), rolling over poles onto the far side.
-  // Aim only — dist belongs to the bead on the beam.
   const len = Math.hypot(lightPositions[li * 3], lightPositions[li * 3 + 1], lightPositions[li * 3 + 2]) || 1;
   const dir = new Float64Array([
     lightPositions[li * 3] / len,
@@ -2019,8 +1948,6 @@ lightLayer.addEventListener('pointerdown', e => {
   });
   const up = () => {
     window.removeEventListener('pointerup', up);
-    // A press without movement is a click: always enter light-edit mode
-    // (deselect lives on the canvas and Esc, not on the marker)
     if (!dragMoved) selectLight(draggedLight);
     draggedLight = -1;
   };

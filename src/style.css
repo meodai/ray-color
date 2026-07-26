@@ -982,6 +982,15 @@ body.colors-open .palette__row-hex {
   stroke-dasharray: 3 3;
 }
 
+/* While the light gizmo is active it also wins pointer priority: its hit
+   strokes and grips rise above the shape handles, so overlaps (e.g. the
+   meridian crossing the circle's center) go to the light — the shape stays
+   grabbable in the clear and still cancels light editing */
+body.light-editing #gizmo,
+body.light-editing #light-layer {
+  z-index: 4;
+}
+
 /* While the light gizmo is active, the sampling shape's LINE recedes —
    the color dots along it stay at full strength */
 #shape-svg .shape-path,
@@ -1331,6 +1340,7 @@ input[type="color"] {
   height: 1.8rem;
   padding: 3px;
   border: var(--s-line) solid currentColor;
+  border-radius: 0; /* iOS rounds form controls by default */
   background: var(--bg);
   cursor: pointer;
   transition: padding 0.15s ease;
@@ -1346,6 +1356,7 @@ input[type="color"]::-webkit-color-swatch-wrapper {
 
 input[type="color"]::-webkit-color-swatch {
   border: none;
+  border-radius: 0; /* the inner swatch gets its own rounding on iOS */
 }
 
 input[type="color"]::-moz-color-swatch {
