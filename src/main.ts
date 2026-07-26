@@ -1886,7 +1886,6 @@ function beginSampleDrag(event: PointerEvent, sample: Sample) {
 }
 
 let draggedLight = -1;
-let dragMoved = false;
 
 lightLayer.addEventListener('pointerdown', e => {
   const gripEl = (e.target as HTMLElement).closest('[data-grip]') as HTMLElement | null;
@@ -1898,8 +1897,8 @@ lightLayer.addEventListener('pointerdown', e => {
   if (!markerEl || markerEl.dataset.light === undefined) return;
   e.preventDefault();
   draggedLight = parseInt(markerEl.dataset.light, 10);
-  dragMoved = false;
   const li = draggedLight;
+  if (selectedLight !== li) selectLight(li);
   const len = Math.hypot(lightPositions[li * 3], lightPositions[li * 3 + 1], lightPositions[li * 3 + 2]) || 1;
   const dir = new Float64Array([
     lightPositions[li * 3] / len,
@@ -1907,7 +1906,6 @@ lightLayer.addEventListener('pointerdown', e => {
     lightPositions[li * 3 + 2] / len,
   ]);
   beginSurfaceDrag(e, dir, () => {
-    dragMoved = true;
     const l = lights[li];
     const a = positionToAngles(dir[0], dir[1], dir[2]);
     l.yaw = Math.round(a.yaw);
@@ -1916,11 +1914,9 @@ lightLayer.addEventListener('pointerdown', e => {
   });
   const up = () => {
     window.removeEventListener('pointerup', up);
-    if (!dragMoved) selectLight(draggedLight);
     draggedLight = -1;
   };
   window.addEventListener('pointerup', up);
-  if (selectedLight >= 0 && selectedLight !== draggedLight) selectLight(draggedLight);
 });
 
 lightLayer.addEventListener('wheel', e => {
