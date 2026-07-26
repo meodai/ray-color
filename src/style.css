@@ -412,7 +412,9 @@ canvas {
 #gizmo {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* above #shape-svg (2): the light's control rings read in front of the
+     sampling shape; the marker/handle layers (also 3, later in DOM) stay on top */
+  z-index: 3;
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -978,6 +980,33 @@ body.colors-open .palette__row-hex {
   fill: none;
   stroke: rgba(255, 255, 255, 0.7);
   stroke-dasharray: 3 3;
+}
+
+/* While the light gizmo is active, the sampling shape's LINE recedes —
+   the color dots along it stay at full strength */
+#shape-svg .shape-path,
+#shape-svg .shape-path-casing,
+#shape-svg .shape-path--back {
+  transition: opacity 0.15s linear;
+}
+
+body.light-editing #shape-svg .shape-path,
+body.light-editing #shape-svg .shape-path-casing,
+body.light-editing #shape-svg .shape-path--back {
+  opacity: 0.5;
+}
+
+/* Invisible wide twin of each orbit ring: the grabbable part */
+.gizmo-orbit-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  cursor: grab;
+  touch-action: none;
+}
+
+.gizmo-orbit-hit:active {
+  cursor: grabbing;
 }
 
 /* Orbit globe — arcball direction control in the inspector */
