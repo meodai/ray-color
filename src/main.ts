@@ -1941,13 +1941,35 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   out.height = canvas.height + stripHeight;
   const octx = out.getContext('2d')!;
   octx.drawImage(canvas, 0, 0);
+  // The sample dots, as drawn on screen — so the image explains itself
+  if (mode !== 'points' && shape) {
+    shapeSampleDirs().forEach((d, i) => {
+      const p = projectDirPct(d);
+      const col = shapeColors[i];
+      octx.globalAlpha = dirIsBehind(d) ? 0.3 : 1; // faded through the sphere, like on screen
+      octx.beginPath();
+      octx.arc(p.sx, p.sy, 4, 0, Math.PI * 2);
+      octx.fillStyle = col ? `rgb(${toSRGB8(col[0])}, ${toSRGB8(col[1])}, ${toSRGB8(col[2])})` : '#fff';
+      octx.fill();
+      octx.lineWidth = 1.5;
+      octx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      octx.stroke();
+    });
+    octx.globalAlpha = 1;
+  }
   const colorWidth = out.width / colors.length;
   colors.forEach((c, i) => {
     octx.fillStyle = c.hex;
     octx.fillRect(i * colorWidth, canvas.height, colorWidth + 1, stripHeight);
   });
   sound.playSuccess();
-  out.toBlob(blob => { if (blob) downloadBlob(blob, 'ray-color-palette.png'); });
+  // Name the file after the palette when color.pizza has titled the current
+  // colors (the title sticks around after edits, so check it isn't stale)
+  const fresh = lastPaletteKey === [...new Set(activeColors().map(hex6))].join(',');
+  const slug = fresh
+    ? (paletteNameEl.textContent ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    : '';
+  out.toBlob(blob => { if (blob) downloadBlob(blob, slug ? `ray-color-${slug}.png` : 'ray-color-palette.png'); });
 });
 
 function activeColors(): ArrayLike<number>[] {
