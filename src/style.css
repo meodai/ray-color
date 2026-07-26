@@ -523,6 +523,22 @@ canvas {
   min-width: 0;
 }
 
+.ellogo {
+  display: inline-block;
+  width: 2.5rem;
+  vertical-align: middle;
+}
+
+.ellogo:hover {
+  color: var(--text);
+}
+
+.ellogo svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .footer__links a {
   color: inherit;
 }
