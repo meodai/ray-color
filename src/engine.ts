@@ -180,6 +180,24 @@ export function rotateAboutAxis(d: Float64Array, axis: ArrayLike<number>, rad: n
   return d;
 }
 
+/** Rigidly rotate a group of unit directions about a center axis, in degrees,
+ * in place. center defaults to the group's normalized mean direction; a
+ * balanced group (zero mean, e.g. antipodal pairs) has no centroid, so an
+ * explicit center is required there. */
+export function rotateDirs(dirs: Float64Array[], deg: number, center?: ArrayLike<number>): Float64Array[] {
+  let ax = center;
+  if (!ax) {
+    let x = 0, y = 0, z = 0;
+    for (const d of dirs) { x += d[0]; y += d[1]; z += d[2]; }
+    const l = Math.hypot(x, y, z);
+    if (l < 1e-9) throw new Error('rotateDirs: group has no centroid — pass an explicit center');
+    ax = [x / l, y / l, z / l];
+  }
+  const rad = deg * Math.PI / 180;
+  for (const d of dirs) rotateAboutAxis(d, ax, rad);
+  return dirs;
+}
+
 /** N surface anchors along the geodesic from a to b (endpoints included).
  * rotate swings the whole set about the geodesic midpoint — 180 reverses it. */
 export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count: number, opts?: Distribution | SampleOptions): Float64Array[] {

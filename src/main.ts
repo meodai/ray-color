@@ -13,6 +13,7 @@ import {
   circleDir,
   circleBasis,
   rotateAboutAxis,
+  rotateDirs,
   sampleLineDirs,
   sampleCircleDirs,
   distributions,
@@ -755,6 +756,83 @@ function updateSampleMarker(sample: Sample) {
   sample.marker.classList.toggle('marker--offscreen', cx !== screenPos.x || cy !== screenPos.y);
   const facing = r - sample.dir[2] * state.cameraZ;
   sample.marker.classList.toggle('marker--behind', facing >= 0);
+}
+
+// Group rotation for loose points: when several samples exist, a dashed ring
+// sits at their spherical centroid — dragging it spins the whole constellation
+// around that center, same gesture as the shapes' rotation grips
+
+function samplesCentroid(out = new Float64Array(3)): Float64Array | null {
+  let x = 0, y = 0, z = 0;
+  for (const s of samples) { x += s.dir[0]; y += s.dir[1]; z += s.dir[2]; }
+  const l = Math.hypot(x, y, z);
+  if (l < 1e-6) return null; // balanced constellation: no centroid, no widget
+  out[0] = x / l; out[1] = y / l; out[2] = z / l;
+  return out;
+}
+
+let samplesRotSpin = 0; // cosmetic: the knob keeps the accumulated turn
+const samplesRotWidget = document.createElement('div');
+samplesRotWidget.className = 'marker samples-rot';
+samplesRotWidget.title = 'Drag to rotate the points around their center';
+samplesRotWidget.addEventListener('pointerdown', e => beginSamplesRotDrag(e));
+sampleLayer.appendChild(samplesRotWidget);
+
+function updateSamplesRotWidget() {
+  const c = mode === 'points' && samples.length > 1 ? samplesCentroid() : null;
+  samplesRotWidget.toggleAttribute('hidden', !c);
+  if (!c) return;
+  const r = state.sphereRadius;
+  const p = engine.worldToScreen(c[0] * r, c[1] * r, c[2] * r);
+  const { x: cx, y: cy } = clampToCanvasAlongLine(p.x, p.y);
+  samplesRotWidget.style.left = `${(cx / canvas.width) * 100}%`;
+  samplesRotWidget.style.top = `${(cy / canvas.height) * 100}%`;
+  samplesRotWidget.style.setProperty('--spin', `${samplesRotSpin}deg`);
+  samplesRotWidget.classList.toggle('marker--behind', r - c[2] * state.cameraZ >= 0);
+}
+
+function beginSamplesRotDrag(e: PointerEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const c = samplesCentroid();
+  if (!c) return;
+  const u = new Float64Array(3), v = new Float64Array(3);
+  circleBasis(c, u, v);
+  const bearingAt = (clientX: number, clientY: number) => {
+    const q = eventToCanvasPixels(clientX, clientY);
+    const h = engine.castRay(q.x, q.y);
+    if (!h) return null;
+    const tu = u[0] * h.nx + u[1] * h.ny + u[2] * h.nz;
+    const tv = v[0] * h.nx + v[1] * h.ny + v[2] * h.nz;
+    return Math.hypot(tu, tv) > 1e-6 ? Math.atan2(tv, tu) : null;
+  };
+  // incremental, so grabbing the ring anywhere never jumps
+  let last = bearingAt(e.clientX, e.clientY);
+  const move = (ev: PointerEvent) => {
+    sound.playTick();
+    const bearing = bearingAt(ev.clientX, ev.clientY);
+    if (bearing === null) return;
+    if (last !== null) {
+      const deg = (bearing - last) * 180 / Math.PI;
+      rotateDirs(samples.map(s => s.dir), deg, c);
+      samplesRotSpin += deg;
+      samples.forEach(sample => {
+        const color = engine.shade(sample.dir);
+        sample.color[0] = color.r;
+        sample.color[1] = color.g;
+        sample.color[2] = color.b;
+        updateSampleMarker(sample);
+      });
+      updateStops();
+    }
+    last = bearing;
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
 }
 
 // ---------------------------------------------------------------- shape sampling
@@ -1891,6 +1969,7 @@ function updateStops() {
   const colors = activeColors();
   document.documentElement.style.setProperty('--stops', colors.length ? cssStops() : 'transparent 0% 100%');
   renderPalette(colors);
+  updateSamplesRotWidget(); // every sample mutation funnels through here
   updateLibSnippet();
   syncPaletteToTokenBeam();
 }

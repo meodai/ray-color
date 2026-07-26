@@ -1129,6 +1129,46 @@ body.light-editing #shape-svg .shape-path--back {
   opacity: .55;
 }
 
+/* Centroid of loose sample points: dashed ring with a knob dot riding it —
+   drag anywhere on it to spin the whole constellation */
+.samples-rot {
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1.5px dashed var(--white);
+  background: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  transform: translate(-50%, -50%) rotate(var(--spin, 0deg));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .6));
+}
+
+.samples-rot::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.samples-rot::after {
+  content: '';
+  position: absolute;
+  top: -0.15rem;
+  left: 50%;
+  width: .3rem;
+  height: .3rem;
+  margin-left: -0.15rem;
+  border-radius: 50%;
+  background: var(--white);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+}
+
+.samples-rot:active {
+  cursor: grabbing;
+}
+
+.samples-rot[hidden] {
+  display: none;
+}
+
 /* Hollow ring: the light sits behind the sphere */
 .light-marker--occluded {
   background: transparent;

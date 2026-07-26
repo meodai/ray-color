@@ -114,6 +114,12 @@ central axis in degrees — around the ring for a circle, around the geodesic
 midpoint for a line (so `rotate: 180` reverses a line's palette). Animate it
 to sweep a shape across the sphere without touching its anchors.
 
+The same motion is available for loose direction sets:
+`rotateDirs(dirs, deg, center?)` rigidly spins any group of unit directions
+about a center axis (in place). `center` defaults to the group's normalized
+mean direction; a balanced group (zero mean) has no centroid, so pass an
+explicit center there.
+
 ### Mirror walls
 
 `scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror).
