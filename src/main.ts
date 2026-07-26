@@ -11,6 +11,8 @@ import {
   DEFAULT_PASS_SCALES,
   slerp,
   circleDir,
+  circleBasis,
+  rotateAboutAxis,
   sampleLineDirs,
   sampleCircleDirs,
   distributions,
@@ -89,6 +91,8 @@ interface SurfaceShape {
   a: Float64Array;   // line start / circle center (unit direction)
   b: Float64Array;   // line end (unit direction)
   rho: number;       // circle angular radius (radians)
+  rotate: number;    // circle sample rotation around the ring (degrees) —
+                     // line rotation bakes straight into a/b instead
 }
 let shape: SurfaceShape | null = null;
 let shapeColors: Float64Array[] = [];
@@ -765,7 +769,7 @@ function shapeSampleDirs(): Float64Array[] {
   // circles always sample evenly (the API still accepts any Distribution)
   return shape.kind === 'line'
     ? sampleLineDirs(shape.a, shape.b, shapeCount, distributions[shapeSpacing])
-    : sampleCircleDirs(shape.a, shape.rho, shapeCount);
+    : sampleCircleDirs(shape.a, shape.rho, shapeCount, { rotate: shape.rotate });
 }
 
 function recomputeShapeColors() {
@@ -784,7 +788,38 @@ function projectDirPct(d: ArrayLike<number>) {
   return { x: (p.x / canvas.width) * 100, y: (p.y / canvas.height) * 100, sx: p.x, sy: p.y };
 }
 
-function makeShapeHandle(role: 'a' | 'b' | 'r', title: string) {
+type HandleRole = 'a' | 'b' | 'r' | 'rot';
+
+// Little satellite point beside the line's midpoint, held off the geodesic so
+// it never collides with a sample dot — dragging it swings the line around
+const ROT_GRIP_ARC = 0.13;
+function lineRotGripDir(out = new Float64Array(3)) {
+  const m = slerp(shape!.a, shape!.b, 0.5);
+  let tx = shape!.b[0] - shape!.a[0];
+  let ty = shape!.b[1] - shape!.a[1];
+  let tz = shape!.b[2] - shape!.a[2];
+  const tl = Math.hypot(tx, ty, tz);
+  let px: number, py: number, pz: number;
+  if (tl < 1e-6) {
+    // zero-length line: any stable side works
+    const u = new Float64Array(3), v = new Float64Array(3);
+    circleBasis(m, u, v);
+    px = u[0]; py = u[1]; pz = u[2];
+  } else {
+    // (b - a) is tangent at the midpoint, so m × t is the unit perpendicular
+    tx /= tl; ty /= tl; tz /= tl;
+    px = m[1] * tz - m[2] * ty;
+    py = m[2] * tx - m[0] * tz;
+    pz = m[0] * ty - m[1] * tx;
+  }
+  const c = Math.cos(ROT_GRIP_ARC), s = Math.sin(ROT_GRIP_ARC);
+  out[0] = c * m[0] + s * px;
+  out[1] = c * m[1] + s * py;
+  out[2] = c * m[2] + s * pz;
+  return out;
+}
+
+function makeShapeHandle(role: HandleRole, title: string) {
   const h = document.createElement('div');
   h.className = 'marker shape-handle';
   h.dataset.handle = role;
@@ -852,14 +887,21 @@ function updateShapeOverlay() {
       h.style.top = `${p.y}%`;
       h.classList.toggle('shape-handle--behind', dirIsBehind(dir));
     }
+    const rot = makeShapeHandle('rot', 'Drag around the middle to rotate the line');
+    lineRotGripDir(pt);
+    const pr = projectDirPct(pt);
+    rot.style.left = `${pr.x}%`;
+    rot.style.top = `${pr.y}%`;
+    rot.classList.add('shape-handle--grip', 'shape-handle--rot');
+    rot.classList.toggle('shape-handle--behind', dirIsBehind(pt));
   } else {
     const center = makeShapeHandle('a', 'Circle center — drag to move');
     const pc = projectDirPct(shape.a);
     center.style.left = `${pc.x}%`;
     center.style.top = `${pc.y}%`;
     center.classList.toggle('shape-handle--behind', dirIsBehind(shape.a));
-    const grip = makeShapeHandle('r', 'Circle radius — drag to resize');
-    circleDir(shape.a, shape.rho, 0, pt);
+    const grip = makeShapeHandle('r', 'Drag out to resize — around the ring to rotate the palette');
+    circleDir(shape.a, shape.rho, shape.rotate * Math.PI / 180, pt);
     const pg = projectDirPct(pt);
     grip.style.left = `${pg.x}%`;
     grip.style.top = `${pg.y}%`;
@@ -913,9 +955,9 @@ function beginSurfaceDrag(e: PointerEvent, dir: Float64Array, onMove: () => void
   window.addEventListener('pointerup', up);
 }
 
-function beginHandleDrag(e: PointerEvent, role: 'a' | 'b' | 'r') {
+function beginHandleDrag(e: PointerEvent, role: HandleRole) {
   if (!shape) return;
-  if (role !== 'r') {
+  if (role === 'a' || role === 'b') {
     // center / endpoints ride the trackball so they can cross to the back
     const target = role === 'a' ? shape.a : shape.b;
     beginSurfaceDrag(e, target, () => {
@@ -925,16 +967,64 @@ function beginHandleDrag(e: PointerEvent, role: 'a' | 'b' | 'r') {
     });
     return;
   }
-  // radius grip: absolute — rho is the angle between center and the point under the pointer
+  const refresh = () => {
+    recomputeShapeColors();
+    updateShapeOverlay();
+    updateStops();
+  };
+  // bearing of a surface hit in the tangent plane spanned by (u, v)
+  const bearingOf = (u: Float64Array, v: Float64Array, nx: number, ny: number, nz: number) => {
+    const tu = u[0] * nx + u[1] * ny + u[2] * nz;
+    const tv = v[0] * nx + v[1] * ny + v[2] * nz;
+    // dead-center the bearing is undefined
+    return Math.hypot(tu, tv) > 1e-6 ? Math.atan2(tv, tu) : null;
+  };
+  if (role === 'rot') {
+    // spin grip: swing the line about its midpoint — endpoints follow the
+    // pointer's bearing around the center, incrementally so grabbing never jumps
+    const m = slerp(shape.a, shape.b, 0.5);
+    const mu = new Float64Array(3), mv = new Float64Array(3);
+    circleBasis(m, mu, mv);
+    const p0 = eventToCanvasPixels(e.clientX, e.clientY);
+    const h0 = engine.castRay(p0.x, p0.y);
+    let last = h0 ? bearingOf(mu, mv, h0.nx, h0.ny, h0.nz) : null;
+    const move = (ev: PointerEvent) => {
+      sound.playTick();
+      const q = eventToCanvasPixels(ev.clientX, ev.clientY);
+      const h = engine.castRay(q.x, q.y);
+      if (!h || !shape) return;
+      const bearing = bearingOf(mu, mv, h.nx, h.ny, h.nz);
+      if (bearing === null) return;
+      if (last !== null) {
+        rotateAboutAxis(shape.a, m, bearing - last);
+        rotateAboutAxis(shape.b, m, bearing - last);
+        refresh();
+      }
+      last = bearing;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return;
+  }
+  // radius grip: absolute — rho is the angle between center and the point under
+  // the pointer, rotate its bearing in the circle plane (the grip rides the
+  // ring, carrying the sample points around with it)
+  const gu = new Float64Array(3), gv = new Float64Array(3);
+  circleBasis(shape.a, gu, gv);
   const move = (ev: PointerEvent) => {
     sound.playTick();
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
     const h = engine.castRay(q.x, q.y);
     if (!h || !shape) return;
     shape.rho = Math.acos(clampDot(shape.a[0] * h.nx + shape.a[1] * h.ny + shape.a[2] * h.nz));
-    recomputeShapeColors();
-    updateShapeOverlay();
-    updateStops();
+    const bearing = bearingOf(gu, gv, h.nx, h.ny, h.nz);
+    // dead-center: hold the current rotation
+    if (bearing !== null) shape.rotate = bearing * 180 / Math.PI;
+    refresh();
   };
   const up = () => {
     window.removeEventListener('pointermove', move);
@@ -945,16 +1035,18 @@ function beginHandleDrag(e: PointerEvent, role: 'a' | 'b' | 'r') {
 }
 
 // Current handle positions in canvas pixels, for forgiving grabbing
-function shapeHandlePoints(): Array<{ role: 'a' | 'b' | 'r'; sx: number; sy: number }> {
+function shapeHandlePoints(): Array<{ role: HandleRole; sx: number; sy: number }> {
   if (!shape) return [];
-  const pts: Array<{ role: 'a' | 'b' | 'r'; sx: number; sy: number }> = [];
+  const pts: Array<{ role: HandleRole; sx: number; sy: number }> = [];
   const pa = projectDirPct(shape.a);
   pts.push({ role: 'a', sx: pa.sx, sy: pa.sy });
   if (shape.kind === 'line') {
     const pb = projectDirPct(shape.b);
     pts.push({ role: 'b', sx: pb.sx, sy: pb.sy });
+    const pr = projectDirPct(lineRotGripDir());
+    pts.push({ role: 'rot', sx: pr.sx, sy: pr.sy });
   } else {
-    const pg = projectDirPct(circleDir(shape.a, shape.rho, 0));
+    const pg = projectDirPct(circleDir(shape.a, shape.rho, shape.rotate * Math.PI / 180));
     pts.push({ role: 'r', sx: pg.sx, sy: pg.sy });
   }
   return pts;
@@ -989,8 +1081,8 @@ canvas.addEventListener('pointerdown', e => {
     lineEnd[2] = -start[0] * sA + start[2] * cA;
   }
   shape = mode === 'line'
-    ? { kind: 'line', a: start, b: lineEnd, rho: 0 }
-    : { kind: 'circle', a: start, b: lineEnd, rho: MIN_ARC };
+    ? { kind: 'line', a: start, b: lineEnd, rho: 0, rotate: 0 }
+    : { kind: 'circle', a: start, b: lineEnd, rho: MIN_ARC, rotate: 0 };
   let dragging = false;
   const move = (ev: PointerEvent) => {
     const q = eventToCanvasPixels(ev.clientX, ev.clientY);
@@ -1027,7 +1119,7 @@ shapeHandles.addEventListener('pointerdown', e => {
   e.preventDefault();
   e.stopPropagation();
   if (selectedLight >= 0) closeInspector();
-  beginHandleDrag(e, el.dataset.handle as 'a' | 'b' | 'r');
+  beginHandleDrag(e, el.dataset.handle as HandleRole);
 });
 
 function deleteShape() {
@@ -1059,7 +1151,7 @@ function ensureModeDefaults() {
   } else if (mode === 'circle') {
     if (!shape || shape.kind !== 'circle') {
       const center = new Float64Array([0, 0, -1]); // facing the camera
-      shape = { kind: 'circle', a: center, b: new Float64Array(center), rho: Math.asin(0.8) };
+      shape = { kind: 'circle', a: center, b: new Float64Array(center), rho: Math.asin(0.8), rotate: 0 };
     }
   } else if (mode === 'line') {
     if (!shape || shape.kind !== 'line') {
@@ -1068,6 +1160,7 @@ function ensureModeDefaults() {
         a: normalize3(-0.6, 0.35, -0.75),
         b: normalize3(0.6, -0.35, -0.75),
         rho: 0,
+        rotate: 0,
       };
     }
   }
@@ -1358,6 +1451,7 @@ presetSelect.addEventListener('change', () => {
     a: new Float64Array(ps.a),
     b: new Float64Array(ps.b ?? ps.a),
     rho: ps.rho ?? 0,
+    rotate: ps.rotate ?? 0,
   };
   shapeCount = ps.count;
   shapeCountInput.value = String(shapeCount);
@@ -1564,7 +1658,8 @@ function updateLibSnippet() {
   let sampler: string;
   if (shape && mode === 'circle') {
     samplerImport = ',\n  sampleCircleDirs';
-    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}\n);`;
+    const rot = Math.abs(shape.rotate) > 0.05 ? `,\n  { rotate: ${fmt(shape.rotate)} }` : '';
+    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}${rot}\n);`;
   } else if (shape && mode === 'line') {
     samplerImport = ',\n  sampleLineDirs, distributions';
     sampler = `const dirs = sampleLineDirs(\n  ${vec(shape.a)},\n  ${vec(shape.b)},\n  ${shapeCount}, distributions.${shapeSpacing}\n);`;

@@ -14,6 +14,7 @@ export interface PresetShape {
   a: [number, number, number];
   b?: [number, number, number]; // line end
   rho?: number;                 // circle angular radius (radians)
+  rotate?: number;              // circle sample rotation around the ring (degrees)
   count: number;
   spacing?: 'linear' | 'smoothstep';
 }

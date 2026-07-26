@@ -497,6 +497,11 @@ canvas {
   height: .55rem;
 }
 
+.shape-handle--rot {
+  width: .4rem;
+  height: .4rem;
+}
+
 .shape-handle--behind {
   opacity: .45;
 }

@@ -103,12 +103,16 @@ engine.
 
 ### Shape sampling
 
-`sampleLineDirs(a, b, count, spacing)` walks the geodesic arc between two
-surface directions; `sampleCircleDirs(center, rho, count, spacing)` walks a
-circle of angular radius `rho` around a center direction. Both take a
-`Distribution` — any `(t: number) => number` mapping over [0, 1] — to space
-the points; `distributions.linear` and `distributions.smoothstep` ship with
-the library.
+`sampleLineDirs(a, b, count, opts)` walks the geodesic arc between two
+surface directions; `sampleCircleDirs(center, rho, count, opts)` walks a
+circle of angular radius `rho` around a center direction. `opts` is either a
+`Distribution` — any `(t: number) => number` mapping over [0, 1] — or an
+options object `{ spacing?, rotate? }`. `spacing` spaces the points
+(`distributions.linear` and `distributions.smoothstep` ship with the
+library); `rotate` rigidly spins the whole sample set about the shape's
+central axis in degrees — around the ring for a circle, around the geodesic
+midpoint for a line (so `rotate: 180` reverses a line's palette). Animate it
+to sweep a shape across the sphere without touching its anchors.
 
 ### Mirror walls
 

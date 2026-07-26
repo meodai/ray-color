@@ -124,43 +124,88 @@ export function slerp(a: ArrayLike<number>, b: ArrayLike<number>, t: number, out
   return out;
 }
 
+/** Deterministic tangent basis (u, v) of the circle plane for a center anchor.
+ * Angle 0 lies along u; angles grow toward v. */
+export function circleBasis(center: ArrayLike<number>, u: Float64Array, v: Float64Array) {
+  const hy = Math.abs(center[1]) > 0.99 ? 0 : 1;
+  const hx = 1 - hy;
+  const ux = hy * center[2];
+  const uy = -hx * center[2];
+  const uz = hx * center[1] - hy * center[0];
+  const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+  u[0] = ux / ulen; u[1] = uy / ulen; u[2] = uz / ulen;
+  v[0] = center[1] * u[2] - center[2] * u[1];
+  v[1] = center[2] * u[0] - center[0] * u[2];
+  v[2] = center[0] * u[1] - center[1] * u[0];
+}
+
+const cbU = new Float64Array(3);
+const cbV = new Float64Array(3);
+
 /** Point on the circle of angular radius rho around a center anchor, at angle phi.
  * The circle's tangent basis is derived deterministically from the center. */
 export function circleDir(center: ArrayLike<number>, rho: number, phi: number, out: Float64Array = new Float64Array(3)) {
-  const hy = Math.abs(center[1]) > 0.99 ? 0 : 1;
-  const hx = 1 - hy;
-  let ux = hy * center[2];
-  let uy = -hx * center[2];
-  let uz = hx * center[1] - hy * center[0];
-  const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
-  ux /= ulen; uy /= ulen; uz /= ulen;
-  const vx = center[1] * uz - center[2] * uy;
-  const vy = center[2] * ux - center[0] * uz;
-  const vz = center[0] * uy - center[1] * ux;
+  circleBasis(center, cbU, cbV);
   const cosR = Math.cos(rho), sinR = Math.sin(rho);
   const cp = Math.cos(phi), sp = Math.sin(phi);
-  out[0] = cosR * center[0] + sinR * (cp * ux + sp * vx);
-  out[1] = cosR * center[1] + sinR * (cp * uy + sp * vy);
-  out[2] = cosR * center[2] + sinR * (cp * uz + sp * vz);
+  out[0] = cosR * center[0] + sinR * (cp * cbU[0] + sp * cbV[0]);
+  out[1] = cosR * center[1] + sinR * (cp * cbU[1] + sp * cbV[1]);
+  out[2] = cosR * center[2] + sinR * (cp * cbU[2] + sp * cbV[2]);
   return out;
 }
 
-/** N surface anchors along the geodesic from a to b (endpoints included). */
-export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count: number, spacing: Distribution = distributions.linear): Float64Array[] {
+/** Options for the shape samplers. A bare Distribution is still accepted in
+ * the same position as shorthand for { spacing }. */
+export interface SampleOptions {
+  spacing?: Distribution;
+  /** Rigid rotation of the whole sample set about the shape's central axis
+   * (circle center / line geodesic midpoint), in degrees. */
+  rotate?: number;
+}
+
+const sampleOpts = (o?: Distribution | SampleOptions): SampleOptions =>
+  typeof o === 'function' ? { spacing: o } : o ?? {};
+
+/** Rotate a unit direction about a unit axis (right-handed, radians), in place. */
+export function rotateAboutAxis(d: Float64Array, axis: ArrayLike<number>, rad: number) {
+  const c = Math.cos(rad), s = Math.sin(rad);
+  const dot = axis[0] * d[0] + axis[1] * d[1] + axis[2] * d[2];
+  const cx = axis[1] * d[2] - axis[2] * d[1];
+  const cy = axis[2] * d[0] - axis[0] * d[2];
+  const cz = axis[0] * d[1] - axis[1] * d[0];
+  const k = dot * (1 - c);
+  d[0] = d[0] * c + cx * s + axis[0] * k;
+  d[1] = d[1] * c + cy * s + axis[1] * k;
+  d[2] = d[2] * c + cz * s + axis[2] * k;
+  return d;
+}
+
+/** N surface anchors along the geodesic from a to b (endpoints included).
+ * rotate swings the whole set about the geodesic midpoint — 180 reverses it. */
+export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count: number, opts?: Distribution | SampleOptions): Float64Array[] {
+  const { spacing = distributions.linear, rotate = 0 } = sampleOpts(opts);
   const n = Math.max(2, count);
   const dirs: Float64Array[] = [];
   for (let k = 0; k < n; k++) {
     dirs.push(slerp(a, b, spacing(k / (n - 1))));
   }
+  if (rotate) {
+    const m = slerp(a, b, 0.5);
+    const rad = rotate * Math.PI / 180;
+    for (const d of dirs) rotateAboutAxis(d, m, rad);
+  }
   return dirs;
 }
 
-/** N surface anchors around a circle (end-exclusive, so no seam duplicate). */
-export function sampleCircleDirs(center: ArrayLike<number>, rho: number, count: number, spacing: Distribution = distributions.linear): Float64Array[] {
+/** N surface anchors around a circle (end-exclusive, so no seam duplicate).
+ * rotate spins the whole set around the circle without moving it. */
+export function sampleCircleDirs(center: ArrayLike<number>, rho: number, count: number, opts?: Distribution | SampleOptions): Float64Array[] {
+  const { spacing = distributions.linear, rotate = 0 } = sampleOpts(opts);
   const n = Math.max(2, count);
+  const phase = rotate * Math.PI / 180;
   const dirs: Float64Array[] = [];
   for (let k = 0; k < n; k++) {
-    dirs.push(circleDir(center, rho, spacing(k / n) * 2 * Math.PI));
+    dirs.push(circleDir(center, rho, phase + spacing(k / n) * 2 * Math.PI));
   }
   return dirs;
 }
