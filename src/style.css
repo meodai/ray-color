@@ -412,8 +412,7 @@ canvas {
 #gizmo {
   position: absolute;
   inset: 0;
-  /* above #shape-svg (2): the light's control rings read in front of the
-     sampling shape; the marker/handle layers (also 3, later in DOM) stay on top */
+  /* above #shape-svg; the marker/handle layers (same z, later in DOM) stay on top */
   z-index: 3;
   width: 100%;
   height: 100%;
@@ -982,17 +981,13 @@ body.colors-open .palette__row-hex {
   stroke-dasharray: 3 3;
 }
 
-/* While the light gizmo is active it also wins pointer priority: its hit
-   strokes and grips rise above the shape handles, so overlaps (e.g. the
-   meridian crossing the circle's center) go to the light — the shape stays
-   grabbable in the clear and still cancels light editing */
+/* light editing wins pointer priority over the shape handles */
 body.light-editing #gizmo,
 body.light-editing #light-layer {
   z-index: 4;
 }
 
-/* While the light gizmo is active, the sampling shape's LINE recedes —
-   the color dots along it stay at full strength */
+/* the shape's stroke recedes while a light is edited; its color dots don't */
 #shape-svg .shape-path,
 #shape-svg .shape-path-casing,
 #shape-svg .shape-path--back {
@@ -1356,7 +1351,7 @@ input[type="color"]::-webkit-color-swatch-wrapper {
 
 input[type="color"]::-webkit-color-swatch {
   border: none;
-  border-radius: 0; /* the inner swatch gets its own rounding on iOS */
+  border-radius: 0;
 }
 
 input[type="color"]::-moz-color-swatch {
