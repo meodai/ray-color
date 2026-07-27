@@ -1,121 +1,34 @@
-// Ray Color playground — direct-manipulation demo for the ray-color engine.
-// State lives here; the engine renders it and answers all scene questions.
+// Ray Color playground — chrome around the <ray-color-view> component.
+// The viewport (render pipeline, gizmos, markers, shape editing) lives in the
+// component; this file owns the toolbar, drawers, inspector, presets, palette
+// panel, exports and sound, wired through the component's events and API.
 
 import { SourceSession, createCollection } from 'token-beam';
 import { SoundManager } from './sound';
 import {
-  createEngine,
   toSRGB8,
   srgbToLinear,
   MAX_LIGHT_DISTANCE,
-  DEFAULT_PASS_SCALES,
-  slerp,
-  circleDir,
-  circleBasis,
-  rotateAboutAxis,
-  rotateDirs,
-  sampleLineDirs,
-  sampleCircleDirs,
-  distributions,
-  positionToAngles,
   type Light,
-  type Scene,
 } from './engine';
-import { createGlPreview, type GlPreview } from './gl-preview';
+import './view'; // registers <ray-color-view> before the element below upgrades
+import type { RayColorViewElement, SampleMode, SpacingName, InputKind } from './view';
 import { PRESETS } from './presets';
 
 const sound = new SoundManager();
 window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
 window.addEventListener('keydown', () => sound.unlock(), { capture: true });
 
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-const ctx = canvas.getContext('2d');
-if (!ctx) throw new Error('Canvas 2D context unavailable');
-// Backing store matches the displayed CSS size (1 rendered pixel = 1 CSS px),
-// so the render isn't upscaled. Kept in sync on resize below.
-const displaySize = () => Math.max(64, Math.round(canvas.clientWidth)) || 400;
-canvas.width = canvas.height = displaySize();
-let imageData = ctx.createImageData(canvas.width, canvas.height);
+const view = document.getElementById('view') as RayColorViewElement;
+// The component owns the canonical scene/lights objects; the chrome edits
+// them in place and calls view.update() — exactly the old engine contract
+const state = view.scene!;
+const lights = view.lights;
 
-// ---------------------------------------------------------------- state
+let selectedLight = -1; // chrome mirror of the view's light selection
+let applyingPreset = false;
 
-// Defaults tuned by hand in the app itself (from a [ray-color settings] log)
-const state: Scene = {
-  cameraZ: -9,
-  fov: 30,
-  sphereRadius: 1.2,
-  sphereHex: '#ffffff',
-  wallHex: '#999999',
-  indirect: 0.3,
-  areaQuality: 6,
-  wallReflect: { back: 0, left: 0, right: 0, top: 0, bottom: 0 },
-};
-
-const lights: Light[] = [
-  { type: 'directional', yaw: -150, pitch: 48, dist: 2, hex: '#ff0000', intensity: 0.95, angle: 30, size: 0.15 },
-  { type: 'directional', yaw: -125, pitch: -40, dist: 2, hex: '#fff700', intensity: 0.3, angle: 30, size: 0.4 },
-  { type: 'directional', yaw: -39, pitch: -35, dist: 2, hex: '#00ffb3', intensity: 0.2, angle: 30, size: 0.15 },
-];
-
-let engine = createEngine(canvas.width, canvas.height, state, lights);
-let lightPositions = engine.lightPositions;
-
-// WebGL2 preview: instant f32 frames while interacting; the f64 CPU render
-// (the one palettes sample from, bit-for-bit) lands once interaction settles.
-// Null on machines without WebGL2 — everything falls back to CPU-only.
-let glPreview: GlPreview | null = createGlPreview(canvas.width, canvas.height);
-if (glPreview) {
-  glPreview.canvas.id = 'gl-canvas';
-  glPreview.canvas.setAttribute('aria-hidden', 'true');
-  canvas.insertAdjacentElement('afterend', glPreview.canvas);
-  glPreview.canvas.addEventListener('webglcontextlost', () => {
-    glPreview!.canvas.remove();
-    glPreview = null;
-    requestRender();
-  });
-}
-
-interface Sample {
-  // Float64 to match the renderer's precision exactly — float32 rounding
-  // shows up as off-by-one channel values after sRGB encoding
-  dir: Float64Array; // unit direction from sphere center (surface anchor)
-  color: Float64Array;
-  marker: HTMLElement;
-}
-let samples: Sample[] = [];
-let selectedLight = -1;
-
-type SampleMode = 'points' | 'line' | 'circle';
-let mode: SampleMode = 'circle';
-interface SurfaceShape {
-  kind: 'line' | 'circle';
-  a: Float64Array;   // line start / circle center (unit direction)
-  b: Float64Array;   // line end (unit direction)
-  rho: number;       // circle angular radius (radians)
-  rotate: number;    // circle sample rotation around the ring (degrees) —
-                     // line rotation bakes straight into a/b instead
-}
-let shape: SurfaceShape | null = null;
-let shapeColors: Float64Array[] = [];
-let shapeCount = 7;
-let shapeSpacing: keyof typeof distributions = 'linear';
-
-// ---------------------------------------------------------------- rendering
-
-async function startRender() {
-  engine.beginFrame();
-  for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
-    engine.renderPass(imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
-    ctx!.putImageData(imageData, 0, 0);
-    await new Promise(requestAnimationFrame);
-  }
-  // Settled (no follow-up render queued): anti-alias the geometric edges
-  if (!pendingRender) {
-    engine.refineEdges(imageData.data);
-    ctx!.putImageData(imageData, 0, 0);
-    scheduleFavicon();
-  }
-}
+// ---------------------------------------------------------------- favicon
 
 // Generative favicon: the rendered sphere itself, clipped to its silhouette.
 // Runs on idle time after a render settles so it never competes with drawing.
@@ -127,6 +40,9 @@ function scheduleFavicon() {
   if (faviconQueued) return;
   const run = () => {
     faviconQueued = 0;
+    const canvas = view.canvas;
+    const engine = view.engine;
+    if (!canvas || !engine) return;
     // exact perspective silhouette: apparent radius asin(r/d), projected
     const d = -state.cameraZ;
     const r = state.sphereRadius;
@@ -150,106 +66,7 @@ function scheduleFavicon() {
     : window.setTimeout(run, 300);
 }
 
-let renderInProgress = false;
-let pendingRender = false;
-let settleTimer: number | undefined;
-let renderGen = 0;
-const SETTLE_MS = 160;
-
-function requestRender() {
-  if (glPreview) {
-    // GPU frame now; full-precision CPU frame once edits stop coming
-    renderGen++;
-    glPreview.draw(state, lights);
-    if (!glPreview.canvas.classList.contains('gl-visible')) glPreview.canvas.classList.add('gl-visible');
-    clearTimeout(settleTimer);
-    settleTimer = window.setTimeout(cpuSettle, SETTLE_MS);
-    return;
-  }
-  cpuProgressiveRender();
-}
-
-// The settled CPU render skips the intermediate blits (the GL frame covers
-// the canvas until the final anti-aliased image is ready), so the progressive
-// ladder never flickers through — but still yields between passes.
-async function cpuSettle() {
-  if (renderInProgress) {
-    // A superseded settle may still be inside a blocking pass — try again
-    // rather than dropping the final render on the floor
-    settleTimer = window.setTimeout(cpuSettle, SETTLE_MS);
-    return;
-  }
-  renderInProgress = true;
-  const gen = renderGen;
-  engine.beginFrame();
-  let done = true;
-  for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
-    engine.renderPass(imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
-    await new Promise(requestAnimationFrame);
-    if (gen !== renderGen) { done = false; break; } // superseded mid-settle
-  }
-  if (done) {
-    engine.refineEdges(imageData.data);
-    ctx!.putImageData(imageData, 0, 0);
-    glPreview?.canvas.classList.remove('gl-visible');
-    scheduleFavicon();
-  }
-  renderInProgress = false;
-  // Superseded settles return without drawing; the timer set by the newer
-  // requestRender rebounds into cpuSettle once edits stop.
-}
-
-// Exports read #canvas, which can hold a stale frame while the GL preview
-// covers it. Force the settled f64 render synchronously — a one-off hitch on
-// click, in exchange for exports always being the exact CPU frame.
-function ensureSettledCanvas() {
-  if (!glPreview || !glPreview.canvas.classList.contains('gl-visible')) return;
-  clearTimeout(settleTimer);
-  renderGen++; // aborts any in-flight async settle without drawing
-  engine.beginFrame();
-  engine.renderPass(imageData.data, 1);
-  engine.refineEdges(imageData.data);
-  ctx!.putImageData(imageData, 0, 0);
-  glPreview.canvas.classList.remove('gl-visible');
-  scheduleFavicon();
-}
-
-async function cpuProgressiveRender() {
-  if (renderInProgress) {
-    pendingRender = true;
-    return;
-  }
-  renderInProgress = true;
-  await startRender();
-  renderInProgress = false;
-  if (pendingRender) {
-    pendingRender = false;
-    cpuProgressiveRender();
-  }
-}
-
-// ---------------------------------------------------------------- projection helpers
-
-function eventToCanvasPixels(clientX: number, clientY: number, clamp = true) {
-  const rect = canvas.getBoundingClientRect();
-  // Exclude the canvas border from the mapping (rect includes it)
-  const bx = (rect.width - canvas.clientWidth) / 2;
-  const by = (rect.height - canvas.clientHeight) / 2;
-  let x = (clientX - rect.left - bx) * (canvas.width / canvas.clientWidth);
-  let y = (clientY - rect.top - by) * (canvas.height / canvas.clientHeight);
-  if (clamp) {
-    x = Math.min(canvas.width - 1, Math.max(0, x));
-    y = Math.min(canvas.height - 1, Math.max(0, y));
-  }
-  return { x, y };
-}
-
-// ---------------------------------------------------------------- markers, gizmo, inspector
-
-const lightLayer = document.getElementById('light-layer')!;
-const sampleLayer = document.getElementById('sample-layer')!;
-const gizmoSvg = document.getElementById('gizmo')!;
-const inspector = document.getElementById('inspector')!;
+// ---------------------------------------------------------------- light rail
 
 // Light-type icons (same drawings as the type select), injected into the
 // control rail; stroke/fill follow currentColor so they can be tinted
@@ -268,43 +85,7 @@ function contrastColor(hexColor: string) {
   return luminance > 0.4 ? '#000' : '#fff';
 }
 
-// Pull an off-canvas point back to the canvas edge ALONG its line toward the
-// canvas center — so edge-clamped markers sit exactly on their aim line
-function clampToCanvasAlongLine(px: number, py: number) {
-  const tx = canvas.width / 2, ty = canvas.height / 2;
-  const dx = tx - px, dy = ty - py;
-  let t = 0;
-  if (px < 0) t = Math.max(t, -px / dx);
-  else if (px > canvas.width) t = Math.max(t, (canvas.width - px) / dx);
-  if (py < 0) t = Math.max(t, -py / dy);
-  else if (py > canvas.height) t = Math.max(t, (canvas.height - py) / dy);
-  return { x: px + dx * t, y: py + dy * t };
-}
-
-function updateLightMarkers() {
-  lightLayer.innerHTML = '';
-  for (let i = 0; i < 3; i++) {
-    const screenPos = engine.worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
-    if (screenPos.z <= 0) continue;
-    const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
-    const normalizedScale = Math.max(0, Math.min(1, (8 - screenPos.z) / 7.5));
-    const marker = document.createElement('div');
-    marker.className = `marker light-marker${lights[i].type === 'directional' ? ' light-marker--directional' : ''}`;
-    marker.dataset.light = String(i);
-    if (cx !== screenPos.x || cy !== screenPos.y) marker.classList.add('marker--offscreen');
-    if (i === selectedLight) marker.classList.add('marker--selected');
-    marker.style.left = `${(cx / canvas.width) * 100}%`;
-    marker.style.top = `${(cy / canvas.height) * 100}%`;
-    // Hollow ring = the light is behind the sphere
-    if (engine.isLightOccluded(i)) {
-      marker.classList.add('light-marker--occluded');
-      marker.style.borderColor = lights[i].hex;
-    } else {
-      marker.style.backgroundColor = lights[i].hex;
-    }
-    marker.style.setProperty('--scale', normalizedScale.toString());
-    lightLayer.appendChild(marker);
-  }
+function updateLightRail() {
   document.querySelectorAll<HTMLElement>('.control-rail__light').forEach((el, i) => {
     el.style.background = lights[i].hex;
     el.style.color = contrastColor(lights[i].hex);
@@ -314,311 +95,6 @@ function updateLightMarkers() {
     }
     el.classList.toggle('control-rail__light--active', i === selectedLight);
   });
-  document.body.classList.toggle('light-editing', selectedLight >= 0);
-  if (selectedLight >= 0) {
-    const i = selectedLight;
-    const sp = engine.worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
-    if (sp.z > 0) {
-      const addGrip = (kind: string, x: number, y: number, round: boolean, title: string) => {
-        const g = document.createElement('div');
-        g.className = 'shape-handle light-grip' + (round ? ' shape-handle--grip' : '');
-        g.dataset.grip = kind;
-        g.title = title;
-        g.style.left = `${(x / canvas.width) * 100}%`;
-        g.style.top = `${(y / canvas.height) * 100}%`;
-        g.style.transform = 'translate(-50%, -50%)';
-        lightLayer.appendChild(g);
-        return g;
-      };
-      const onCanvas = sp.x >= 0 && sp.x <= canvas.width && sp.y >= 0 && sp.y <= canvas.height;
-      if (onCanvas) {
-        const r = intensityRingRadius(lights[i].intensity);
-        const ga = -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
-        addGrip('intensity', sp.x + Math.cos(ga) * r, sp.y + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
-      }
-      // edge-clamped as a remote when the beam leaves the canvas
-      const b = beadWorld(i);
-      const bp = engine.worldToScreen(b.x, b.y, b.z);
-      let bx = bp.x, by = bp.y;
-      const beadOff = bx < 0 || bx > canvas.width || by < 0 || by > canvas.height;
-      if (beadOff) ({ x: bx, y: by } = clampToCanvasAlongLine(bp.x, bp.y));
-      const bead = addGrip('dist', bx, by, false, 'Distance — slide along the beam');
-      if (beadOff) bead.classList.add('shape-handle--behind');
-    }
-  }
-  updateGizmo();
-}
-
-function updateGizmo() {
-  gizmoSvg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
-  gizmoSvg.innerHTML = '';
-  if (selectedLight < 0) return;
-  const i = selectedLight;
-  const NS = 'http://www.w3.org/2000/svg';
-  // rings stay drawable even when the light is off-canvas or behind the camera
-  drawOrbit('yaw', i, NS);
-  drawOrbit('pitch', i, NS);
-  const screenPos = engine.worldToScreen(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2]);
-  if (screenPos.z <= 0) return;
-  const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
-  const type = lights[i].type;
-  {
-    // Aim line from the light to where its ray meets the sphere's surface.
-    const lx = lightPositions[i * 3], ly = lightPositions[i * 3 + 1], lz = lightPositions[i * 3 + 2];
-    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
-    const s = state.sphereRadius / llen;
-    const ex = lx * s, ey = ly * s, ez = lz * s;
-    const N = 32;
-    const sp = pathSplitter(false);
-    for (let k = 0; k <= N; k++) {
-      const t = k / N;
-      sp.add(lx + (ex - lx) * t, ly + (ey - ly) * t, lz + (ez - lz) * t);
-    }
-    const { vis, hid } = sp.paths();
-    if (hid) appendPaths(NS, hid, [['', 'gizmo-line--hidden']]);
-    if (vis) appendPaths(NS, vis, [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']]);
-  }
-  if (type === 'area' && lights[i].size > 0) {
-    const r = (lights[i].size / (screenPos.z * engine.tanFov())) * (canvas.height / 2);
-    const circle = document.createElementNS(NS, 'circle');
-    circle.setAttribute('cx', cx.toFixed(1));
-    circle.setAttribute('cy', cy.toFixed(1));
-    circle.setAttribute('r', Math.max(2, r).toFixed(1));
-    circle.setAttribute('class', 'gizmo-area');
-    gizmoSvg.appendChild(circle);
-  }
-  if (cx === screenPos.x && cy === screenPos.y) {
-    const r = intensityRingRadius(lights[i].intensity);
-    for (const [width, cls] of [['3', 'shape-path-casing'], ['1.5', 'shape-path']] as const) {
-      const ring = document.createElementNS(NS, 'circle');
-      ring.setAttribute('cx', cx.toFixed(1));
-      ring.setAttribute('cy', cy.toFixed(1));
-      ring.setAttribute('r', r.toFixed(1));
-      ring.setAttribute('fill', 'none');
-      ring.setAttribute('stroke-width', width);
-      ring.setAttribute('class', cls);
-      gizmoSvg.appendChild(ring);
-    }
-  }
-}
-
-// fixed radii — the meridian tighter so the rings never read as one ellipse
-const orbitRadius = (kind: 'yaw' | 'pitch') => state.sphereRadius + (kind === 'yaw' ? 0.5 : 0.28);
-
-function ringWorld(kind: 'yaw' | 'pitch', aRad: number, yawRad: number, d: number) {
-  return kind === 'yaw'
-    ? { x: Math.cos(aRad) * d, y: Math.sin(aRad) * YAW_TILT_S * d, z: Math.sin(aRad) * YAW_TILT_C * d }
-    : { x: Math.cos(aRad) * Math.cos(yawRad) * d, y: Math.sin(aRad) * d, z: Math.cos(aRad) * Math.sin(yawRad) * d };
-}
-
-function pathSplitter(withHit: boolean) {
-  let vis = '', hid = '', hit = '', pv = false, ph = false, pt = false;
-  return {
-    add(wx: number, wy: number, wz: number, veto?: (sx: number, sy: number) => boolean) {
-      const p = engine.worldToScreen(wx, wy, wz);
-      if (p.z <= 0.5) {
-        pv = ph = pt = false;
-        return;
-      }
-      const seg = p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ';
-      if (withHit) {
-        if (p.x >= -24 && p.x <= canvas.width + 24 && p.y >= -24 && p.y <= canvas.height + 24) {
-          hit += (pt ? 'L' : 'M') + seg;
-          pt = true;
-        } else pt = false;
-      }
-      if (engine.isPointOccluded(wx, wy, wz)) { hid += (ph ? 'L' : 'M') + seg; ph = true; pv = false; }
-      else if (veto?.(p.x, p.y)) { pv = false; ph = false; }
-      else { vis += (pv ? 'L' : 'M') + seg; pv = true; ph = false; }
-    },
-    paths: () => ({ vis, hid, hit }),
-  };
-}
-
-function appendPaths(NS: string, d: string, styles: ReadonlyArray<readonly [string, string]>) {
-  for (const [width, cls] of styles) {
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', d);
-    if (width) path.setAttribute('stroke-width', width);
-    path.setAttribute('class', cls);
-    gizmoSvg.appendChild(path);
-  }
-}
-
-function drawOrbit(kind: 'yaw' | 'pitch', i: number, NS: string) {
-  const d = orbitRadius(kind);
-  const yawRad = lights[i].yaw * Math.PI / 180;
-  // the dial's front half notches the meridian where they cross on screen
-  let maskPts: Array<{ x: number; y: number }> | null = null;
-  if (kind === 'pitch') {
-    maskPts = [];
-    const dm = orbitRadius('yaw');
-    for (let k = 0; k < 256; k++) {
-      const m = ringWorld('yaw', (k / 256) * 2 * Math.PI, yawRad, dm);
-      if (m.z >= 0 || engine.isPointOccluded(m.x, m.y, m.z)) continue;
-      const mp = engine.worldToScreen(m.x, m.y, m.z);
-      if (mp.z > 0.5) maskPts.push({ x: mp.x, y: mp.y });
-    }
-  }
-  const nearOtherRing = (x: number, y: number) => {
-    if (!maskPts) return false;
-    for (const m of maskPts) {
-      if ((m.x - x) * (m.x - x) + (m.y - y) * (m.y - y) < 36) return true; // ~6px
-    }
-    return false;
-  };
-  const N = 192; // fine enough that the meridian notch can't slip between samples
-  const sp = pathSplitter(true);
-  for (let k = 0; k <= N; k++) {
-    const w = ringWorld(kind, (k / N) * 2 * Math.PI, yawRad, d);
-    sp.add(w.x, w.y, w.z, w.z < 0 ? nearOtherRing : undefined);
-  }
-  const { vis, hid, hit: hitD } = sp.paths();
-  if (hid) appendPaths(NS, hid, [['', 'gizmo-line--hidden']]);
-  if (vis) appendPaths(NS, vis, [['3', 'shape-path-casing'], ['1.5', 'shape-path']]);
-  let tickD = '';
-  for (let deg = 0; deg < 360; deg += 10) {
-    const aRad = deg * Math.PI / 180;
-    const base = ringWorld(kind, aRad, yawRad, d);
-    if (engine.isPointOccluded(base.x, base.y, base.z)) continue;
-    const len = deg % 45 === 0 ? 0.13 : 0.055;
-    const tip = ringWorld(kind, aRad, yawRad, d + len);
-    const p0 = engine.worldToScreen(base.x, base.y, base.z);
-    const p1 = engine.worldToScreen(tip.x, tip.y, tip.z);
-    if (p0.z <= 0.5 || p1.z <= 0.5) continue;
-    if (base.z < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
-    tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
-  }
-  if (tickD) {
-    const ticks = document.createElementNS(NS, 'path') as SVGPathElement;
-    ticks.setAttribute('d', tickD);
-    // inline style: the class CSS carries its own stroke-width, which
-    // beats the presentation attribute
-    ticks.style.strokeWidth = '0.6';
-    ticks.setAttribute('class', 'shape-path');
-    gizmoSvg.appendChild(ticks);
-  }
-  if (hitD) {
-    const hit = document.createElementNS(NS, 'path') as SVGPathElement;
-    hit.setAttribute('d', hitD);
-    hit.setAttribute('class', 'gizmo-orbit-hit');
-    hit.setAttribute('pointer-events', 'stroke'); // the svg root is pointer-events: none
-    hit.dataset.orbit = kind;
-    gizmoSvg.appendChild(hit);
-  }
-}
-
-const angDelta = (a: number, b: number) => ((a - b + 540) % 360) - 180;
-const YAW_TILT_S = Math.sin(10 * Math.PI / 180);
-const YAW_TILT_C = Math.cos(10 * Math.PI / 180);
-
-gizmoSvg.addEventListener('pointerdown', e => {
-  const orbit = (e.target as SVGElement).dataset?.orbit as 'yaw' | 'pitch' | undefined;
-  if (!orbit || selectedLight < 0) return;
-  e.preventDefault();
-  const li = selectedLight;
-  // fixed for the whole drag; the light may flip to planeYaw + 180 on the far half
-  const planeYaw = lights[li].yaw;
-  let aCur = orbit === 'yaw'
-    ? lights[li].yaw
-    : (Math.abs(angDelta(lights[li].yaw, planeYaw)) <= 90 ? lights[li].pitch : 180 - lights[li].pitch);
-  const ringPoint = (aDeg: number) => {
-    const w = ringWorld(orbit, aDeg * Math.PI / 180, planeYaw * Math.PI / 180, orbitRadius(orbit));
-    return engine.worldToScreen(w.x, w.y, w.z);
-  };
-  // drag model by projected shape: fat ellipse — bearing-tracking around the
-  // center; slim / edge-on — linear tangent spin (bearings degenerate there)
-  const center = engine.worldToScreen(0, 0, 0);
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, anyPt = false;
-  for (let a = 0; a < 360; a += 15) {
-    const sp = ringPoint(a);
-    if (sp.z <= 0.5) continue;
-    anyPt = true;
-    minX = Math.min(minX, sp.x); maxX = Math.max(maxX, sp.x);
-    minY = Math.min(minY, sp.y); maxY = Math.max(maxY, sp.y);
-  }
-  const angular = anyPt && Math.min(maxX - minX, maxY - minY) > 0.35 * Math.max(maxX - minX, maxY - minY);
-  const ringAngle = (aDeg: number) => {
-    const sp = ringPoint(aDeg);
-    return Math.atan2(sp.y - center.y, sp.x - center.x) * 180 / Math.PI;
-  };
-  let spinX = 1, spinY = 0;
-  {
-    for (const probe of [0, 30, 90]) {
-      const a0 = ringPoint(aCur + probe - 2), a1 = ringPoint(aCur + probe + 2);
-      if (a0.z <= 0.5 || a1.z <= 0.5) continue;
-      const tx = a1.x - a0.x, ty = a1.y - a0.y;
-      const tl = Math.hypot(tx, ty);
-      if (tl > 2) { spinX = tx / tl; spinY = ty / tl; break; }
-    }
-  }
-  let ringR = 1;
-  for (const a of [0, 45, 90, 135]) {
-    const p0 = ringPoint(a), p1 = ringPoint(a + 180);
-    if (p0.z > 0.5 && p1.z > 0.5) ringR = Math.max(ringR, Math.hypot(p1.x - p0.x, p1.y - p0.y) / 2);
-  }
-  const rate = 90 / ringR;
-  let prev = eventToCanvasPixels(e.clientX, e.clientY, false);
-  // relative in both modes: grabbing never snaps the light to the grab point
-  let thetaPrev = Math.atan2(prev.y - center.y, prev.x - center.x) * 180 / Math.PI;
-  let targetBearing: number | null = null;
-  const move = (ev: PointerEvent) => {
-    const p = eventToCanvasPixels(ev.clientX, ev.clientY, false);
-    if (angular) {
-      if (Math.hypot(p.x - center.x, p.y - center.y) < 24) return; // unstable near center
-      const theta = Math.atan2(p.y - center.y, p.x - center.x) * 180 / Math.PI;
-      if (targetBearing === null) targetBearing = ringAngle(aCur);
-      targetBearing += angDelta(theta, thetaPrev);
-      thetaPrev = theta;
-      let bestA = aCur, bestErr = Infinity;
-      for (let off = -90; off <= 90; off += 1) {
-        const a = aCur + off;
-        const sp = ringPoint(a);
-        if (sp.z <= 0.5) continue;
-        const err = Math.abs(angDelta(ringAngle(a), targetBearing));
-        if (err < bestErr) { bestErr = err; bestA = a; }
-      }
-      aCur = bestA;
-    } else {
-      aCur += ((p.x - prev.x) * spinX + (p.y - prev.y) * spinY) * rate;
-    }
-    prev = p;
-    const l = lights[li];
-    if (orbit === 'yaw') {
-      l.yaw = Math.round(angDelta(aCur, 0));
-    } else {
-      // past a pole the light continues on the far half of the same plane
-      const pitch = Math.asin(Math.sin(aCur * Math.PI / 180)) * 180 / Math.PI;
-      l.yaw = Math.round(angDelta(Math.cos(aCur * Math.PI / 180) >= 0 ? planeYaw : planeYaw + 180, 0));
-      l.pitch = Math.round(Math.max(-89, Math.min(89, pitch)));
-    }
-    sound.playTick();
-    update();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-});
-
-// asymptotic (x / (x + 1)): any intensity has a radius, dragging never snap-clamps
-const INT_R0 = 16;   // ring radius at intensity 0
-const INT_R1 = 36;   // additional radius as intensity -> inf
-const INT_MAX = 19;  // hard ceiling when dragging the grip outward
-
-function intensityRingRadius(intensity: number) {
-  return INT_R0 + INT_R1 * (intensity / (intensity + 1));
-}
-
-const BEAD_F = 0.5;
-
-function beadWorld(i: number) {
-  const lx = lightPositions[i * 3], ly = lightPositions[i * 3 + 1], lz = lightPositions[i * 3 + 2];
-  const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
-  const s = (BEAD_F * state.sphereRadius + (1 - BEAD_F) * lights[i].dist) / llen;
-  return { x: lx * s, y: ly * s, z: lz * s };
 }
 
 // ---------------------------------------------------------------- orbit globe
@@ -626,6 +102,7 @@ function beadWorld(i: number) {
 // a tilted orthographic globe — meridian and parallel cross at the dot,
 // front halves bright, back halves dim. Drag anywhere on it to aim the light.
 
+const inspector = document.getElementById('inspector')!;
 const orbitEl = document.getElementById('orbit')!;
 const orbitDot = document.getElementById('orbit-dot')!;
 const orbitOut = document.getElementById('orbitOut')!;
@@ -738,474 +215,14 @@ orbitEl.addEventListener('pointermove', e => {
   }
   l.yaw = Math.round(wrap180(yaw));
   l.pitch = Math.round(Math.max(-89, Math.min(89, pitch)));
-  update();
+  view.update();
 });
 orbitEl.addEventListener('pointerup', e => {
   orbiting = false;
   orbitEl.releasePointerCapture(e.pointerId);
 });
 
-function updateSampleMarker(sample: Sample) {
-  const r = state.sphereRadius;
-  const screenPos = engine.worldToScreen(sample.dir[0] * r, sample.dir[1] * r, sample.dir[2] * r);
-  // Keep offscreen samples visible (and grabbable) at the canvas edge,
-  // clamped along their line to center — same treatment as light markers
-  const { x: cx, y: cy } = clampToCanvasAlongLine(screenPos.x, screenPos.y);
-  sample.marker.style.left = `${(cx / canvas.width) * 100}%`;
-  sample.marker.style.top = `${(cy / canvas.height) * 100}%`;
-  sample.marker.classList.toggle('marker--offscreen', cx !== screenPos.x || cy !== screenPos.y);
-  const facing = r - sample.dir[2] * state.cameraZ;
-  sample.marker.classList.toggle('marker--behind', facing >= 0);
-}
-
-// Group rotation for loose points: when several samples exist, a dashed ring
-// sits at their spherical centroid — dragging it spins the whole constellation
-// around that center, same gesture as the shapes' rotation grips
-
-function samplesCentroid(out = new Float64Array(3)): Float64Array | null {
-  let x = 0, y = 0, z = 0;
-  for (const s of samples) { x += s.dir[0]; y += s.dir[1]; z += s.dir[2]; }
-  const l = Math.hypot(x, y, z);
-  if (l < 1e-6) return null; // balanced constellation: no centroid, no widget
-  out[0] = x / l; out[1] = y / l; out[2] = z / l;
-  return out;
-}
-
-let samplesRotSpin = 0; // cosmetic: the knob keeps the accumulated turn
-const samplesRotWidget = document.createElement('div');
-samplesRotWidget.className = 'marker samples-rot';
-samplesRotWidget.title = 'Drag to rotate the points around their center';
-samplesRotWidget.addEventListener('pointerdown', e => beginSamplesRotDrag(e));
-sampleLayer.appendChild(samplesRotWidget);
-
-function updateSamplesRotWidget() {
-  const c = mode === 'points' && samples.length > 1 ? samplesCentroid() : null;
-  samplesRotWidget.toggleAttribute('hidden', !c);
-  if (!c) return;
-  const r = state.sphereRadius;
-  const p = engine.worldToScreen(c[0] * r, c[1] * r, c[2] * r);
-  const { x: cx, y: cy } = clampToCanvasAlongLine(p.x, p.y);
-  samplesRotWidget.style.left = `${(cx / canvas.width) * 100}%`;
-  samplesRotWidget.style.top = `${(cy / canvas.height) * 100}%`;
-  samplesRotWidget.style.setProperty('--spin', `${samplesRotSpin}deg`);
-  samplesRotWidget.classList.toggle('marker--behind', r - c[2] * state.cameraZ >= 0);
-}
-
-function beginSamplesRotDrag(e: PointerEvent) {
-  e.preventDefault();
-  e.stopPropagation();
-  const c = samplesCentroid();
-  if (!c) return;
-  const u = new Float64Array(3), v = new Float64Array(3);
-  circleBasis(c, u, v);
-  const bearingAt = (clientX: number, clientY: number) => {
-    const q = eventToCanvasPixels(clientX, clientY);
-    const h = engine.castRay(q.x, q.y);
-    if (!h) return null;
-    const tu = u[0] * h.nx + u[1] * h.ny + u[2] * h.nz;
-    const tv = v[0] * h.nx + v[1] * h.ny + v[2] * h.nz;
-    return Math.hypot(tu, tv) > 1e-6 ? Math.atan2(tv, tu) : null;
-  };
-  // incremental, so grabbing the ring anywhere never jumps
-  let last = bearingAt(e.clientX, e.clientY);
-  const move = (ev: PointerEvent) => {
-    sound.playTick();
-    const bearing = bearingAt(ev.clientX, ev.clientY);
-    if (bearing === null) return;
-    if (last !== null) {
-      const deg = (bearing - last) * 180 / Math.PI;
-      rotateDirs(samples.map(s => s.dir), deg, c);
-      samplesRotSpin += deg;
-      samples.forEach(sample => {
-        const color = engine.shade(sample.dir);
-        sample.color[0] = color.r;
-        sample.color[1] = color.g;
-        sample.color[2] = color.b;
-        updateSampleMarker(sample);
-      });
-      updateStops();
-    }
-    last = bearing;
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-}
-
-// ---------------------------------------------------------------- shape sampling
-// One shape at a time, anchored to the sphere's surface: a geodesic arc
-// between two anchors, or a circle of angular radius rho around a center.
-
-const shapeSvg = document.getElementById('shape-svg')!;
-const shapeHandles = document.getElementById('shape-handles')!;
-
-function shapeSampleDirs(): Float64Array[] {
-  if (!shape) return [];
-  // circles always sample evenly (the API still accepts any Distribution)
-  return shape.kind === 'line'
-    ? sampleLineDirs(shape.a, shape.b, shapeCount, distributions[shapeSpacing])
-    : sampleCircleDirs(shape.a, shape.rho, shapeCount, { rotate: shape.rotate });
-}
-
-function recomputeShapeColors() {
-  shapeColors = shapeSampleDirs().map(dir => {
-    const c = engine.shade(dir);
-    return new Float64Array([c.r, c.g, c.b]);
-  });
-}
-
-// Front/back test for a surface direction (same as sample markers)
-const dirIsBehind = (d: ArrayLike<number>) => state.sphereRadius - d[2] * state.cameraZ >= 0;
-
-function projectDirPct(d: ArrayLike<number>) {
-  const r = state.sphereRadius;
-  const p = engine.worldToScreen(d[0] * r, d[1] * r, d[2] * r);
-  return { x: (p.x / canvas.width) * 100, y: (p.y / canvas.height) * 100, sx: p.x, sy: p.y };
-}
-
-type HandleRole = 'a' | 'b' | 'r' | 'rot';
-
-// Little satellite point beside the line's midpoint, held off the geodesic so
-// it never collides with a sample dot — dragging it swings the line around
-const ROT_GRIP_ARC = 0.13;
-function lineRotGripDir(out = new Float64Array(3)) {
-  const m = slerp(shape!.a, shape!.b, 0.5);
-  let tx = shape!.b[0] - shape!.a[0];
-  let ty = shape!.b[1] - shape!.a[1];
-  let tz = shape!.b[2] - shape!.a[2];
-  const tl = Math.hypot(tx, ty, tz);
-  let px: number, py: number, pz: number;
-  if (tl < 1e-6) {
-    // zero-length line: any stable side works
-    const u = new Float64Array(3), v = new Float64Array(3);
-    circleBasis(m, u, v);
-    px = u[0]; py = u[1]; pz = u[2];
-  } else {
-    // (b - a) is tangent at the midpoint, so m × t is the unit perpendicular
-    tx /= tl; ty /= tl; tz /= tl;
-    px = m[1] * tz - m[2] * ty;
-    py = m[2] * tx - m[0] * tz;
-    pz = m[0] * ty - m[1] * tx;
-  }
-  const c = Math.cos(ROT_GRIP_ARC), s = Math.sin(ROT_GRIP_ARC);
-  out[0] = c * m[0] + s * px;
-  out[1] = c * m[1] + s * py;
-  out[2] = c * m[2] + s * pz;
-  return out;
-}
-
-function makeShapeHandle(role: HandleRole, title: string) {
-  const h = document.createElement('div');
-  h.className = 'marker shape-handle';
-  h.dataset.handle = role;
-  h.title = title;
-  shapeHandles.appendChild(h);
-  return h;
-}
-
-function updateShapeOverlay() {
-  shapeSvg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
-  shapeSvg.innerHTML = '';
-  shapeHandles.innerHTML = '';
-  const active = mode !== 'points';
-  shapeSvg.toggleAttribute('hidden', !active);
-  shapeHandles.toggleAttribute('hidden', !active);
-  if (!active || !shape) return;
-  const NS = 'http://www.w3.org/2000/svg';
-
-  // Dense polyline along the shape, split into front / behind portions
-  const steps = shape.kind === 'line' ? 40 : 72;
-  const pt = new Float64Array(3);
-  let frontD = '', backD = '', pf = false, pb = false;
-  for (let k = 0; k <= steps; k++) {
-    const t = k / steps;
-    if (shape.kind === 'line') slerp(shape.a, shape.b, t, pt);
-    else circleDir(shape.a, shape.rho, t * 2 * Math.PI, pt);
-    const p = projectDirPct(pt);
-    const seg = p.sx.toFixed(1) + ' ' + p.sy.toFixed(1) + ' ';
-    if (!dirIsBehind(pt)) { frontD += (pf ? 'L' : 'M') + seg; pf = true; pb = false; }
-    else { backD += (pb ? 'L' : 'M') + seg; pb = true; pf = false; }
-  }
-  if (backD) {
-    const back = document.createElementNS(NS, 'path');
-    back.setAttribute('d', backD);
-    back.setAttribute('class', 'shape-path shape-path--back');
-    shapeSvg.appendChild(back);
-  }
-  if (frontD) {
-    for (const cls of ['shape-path-casing', 'shape-path']) {
-      const el = document.createElementNS(NS, 'path');
-      el.setAttribute('d', frontD);
-      el.setAttribute('class', cls);
-      shapeSvg.appendChild(el);
-    }
-  }
-
-  const dirs = shapeSampleDirs();
-  dirs.forEach((d, k) => {
-    const p = projectDirPct(d);
-    const dot = document.createElementNS(NS, 'circle');
-    dot.setAttribute('cx', p.sx.toFixed(1));
-    dot.setAttribute('cy', p.sy.toFixed(1));
-    dot.setAttribute('r', '3');
-    const col = shapeColors[k];
-    if (col) dot.setAttribute('fill', `rgb(${toSRGB8(col[0])}, ${toSRGB8(col[1])}, ${toSRGB8(col[2])})`);
-    dot.setAttribute('class', `shape-dot${dirIsBehind(d) ? ' shape-dot--back' : ''}`);
-    shapeSvg.appendChild(dot);
-  });
-
-  if (shape.kind === 'line') {
-    for (const [role, dir, title] of [['a', shape.a, 'Line start'], ['b', shape.b, 'Line end']] as const) {
-      const h = makeShapeHandle(role, `${title} — drag to move`);
-      const p = projectDirPct(dir);
-      h.style.left = `${p.x}%`;
-      h.style.top = `${p.y}%`;
-      h.classList.toggle('shape-handle--behind', dirIsBehind(dir));
-    }
-    const rot = makeShapeHandle('rot', 'Drag around the middle to rotate the line');
-    lineRotGripDir(pt);
-    const pr = projectDirPct(pt);
-    rot.style.left = `${pr.x}%`;
-    rot.style.top = `${pr.y}%`;
-    rot.classList.add('shape-handle--grip', 'shape-handle--rot');
-    rot.classList.toggle('shape-handle--behind', dirIsBehind(pt));
-  } else {
-    const center = makeShapeHandle('a', 'Circle center — drag to move');
-    const pc = projectDirPct(shape.a);
-    center.style.left = `${pc.x}%`;
-    center.style.top = `${pc.y}%`;
-    center.classList.toggle('shape-handle--behind', dirIsBehind(shape.a));
-    const grip = makeShapeHandle('r', 'Drag out to resize — around the ring to rotate the palette');
-    circleDir(shape.a, shape.rho, shape.rotate * Math.PI / 180, pt);
-    const pg = projectDirPct(pt);
-    grip.style.left = `${pg.x}%`;
-    grip.style.top = `${pg.y}%`;
-    grip.classList.add('shape-handle--grip');
-    grip.classList.toggle('shape-handle--behind', dirIsBehind(pt));
-  }
-}
-
-const clampDot = (d: number) => Math.max(-1, Math.min(1, d));
-
-// Trackball drag for a point anchored to the sphere's surface — same feel as
-// the lights: relative to where it was (pressing never jumps), and the back
-// hemisphere is reached by continuing past the silhouette, where horizontal
-// motion inverts like the far side of a spinning globe.
-const SURFACE_DEG_PER_RADIUS = 90;
-function beginSurfaceDrag(e: PointerEvent, dir: Float64Array, onMove: () => void) {
-  // unclamped: the rotation must keep going when the cursor leaves the canvas
-  const start = eventToCanvasPixels(e.clientX, e.clientY, false);
-  const yaw0 = Math.atan2(dir[0], -dir[2]) * 180 / Math.PI;
-  const pitch0 = Math.asin(clampDot(dir[1])) * 180 / Math.PI;
-  // one silhouette-radius of pointer travel = 90° of rotation
-  const silR = Math.max(1, engine.worldToScreen(state.sphereRadius, 0, 0).x - canvas.width / 2);
-  const move = (ev: PointerEvent) => {
-    sound.playTick();
-    const q = eventToCanvasPixels(ev.clientX, ev.clientY, false);
-    const dxu = (q.x - start.x) / silR;
-    const dyu = (start.y - q.y) / silR;
-    let yaw = yaw0 + dxu * SURFACE_DEG_PER_RADIUS;
-    // Pitch keeps going over the poles: crossing one flips yaw to the far side
-    let pitch = wrap180(pitch0 + dyu * SURFACE_DEG_PER_RADIUS);
-    if (pitch > 90) {
-      pitch = 180 - pitch;
-      yaw += 180;
-    } else if (pitch < -90) {
-      pitch = -180 - pitch;
-      yaw += 180;
-    }
-    const yr = wrap180(yaw) * Math.PI / 180;
-    const pr = pitch * Math.PI / 180;
-    const cp = Math.cos(pr);
-    dir[0] = Math.sin(yr) * cp;
-    dir[1] = Math.sin(pr);
-    dir[2] = -Math.cos(yr) * cp;
-    onMove();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-}
-
-function beginHandleDrag(e: PointerEvent, role: HandleRole) {
-  if (!shape) return;
-  if (role === 'a' || role === 'b') {
-    // center / endpoints ride the trackball so they can cross to the back
-    const target = role === 'a' ? shape.a : shape.b;
-    beginSurfaceDrag(e, target, () => {
-      recomputeShapeColors();
-      updateShapeOverlay();
-      updateStops();
-    });
-    return;
-  }
-  const refresh = () => {
-    recomputeShapeColors();
-    updateShapeOverlay();
-    updateStops();
-  };
-  // bearing of a surface hit in the tangent plane spanned by (u, v)
-  const bearingOf = (u: Float64Array, v: Float64Array, nx: number, ny: number, nz: number) => {
-    const tu = u[0] * nx + u[1] * ny + u[2] * nz;
-    const tv = v[0] * nx + v[1] * ny + v[2] * nz;
-    // dead-center the bearing is undefined
-    return Math.hypot(tu, tv) > 1e-6 ? Math.atan2(tv, tu) : null;
-  };
-  if (role === 'rot') {
-    // spin grip: swing the line about its midpoint — endpoints follow the
-    // pointer's bearing around the center, incrementally so grabbing never jumps
-    const m = slerp(shape.a, shape.b, 0.5);
-    const mu = new Float64Array(3), mv = new Float64Array(3);
-    circleBasis(m, mu, mv);
-    const p0 = eventToCanvasPixels(e.clientX, e.clientY);
-    const h0 = engine.castRay(p0.x, p0.y);
-    let last = h0 ? bearingOf(mu, mv, h0.nx, h0.ny, h0.nz) : null;
-    const move = (ev: PointerEvent) => {
-      sound.playTick();
-      const q = eventToCanvasPixels(ev.clientX, ev.clientY);
-      const h = engine.castRay(q.x, q.y);
-      if (!h || !shape) return;
-      const bearing = bearingOf(mu, mv, h.nx, h.ny, h.nz);
-      if (bearing === null) return;
-      if (last !== null) {
-        rotateAboutAxis(shape.a, m, bearing - last);
-        rotateAboutAxis(shape.b, m, bearing - last);
-        refresh();
-      }
-      last = bearing;
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    return;
-  }
-  // radius grip: absolute — rho is the angle between center and the point under
-  // the pointer, rotate its bearing in the circle plane (the grip rides the
-  // ring, carrying the sample points around with it)
-  const gu = new Float64Array(3), gv = new Float64Array(3);
-  circleBasis(shape.a, gu, gv);
-  const move = (ev: PointerEvent) => {
-    sound.playTick();
-    const q = eventToCanvasPixels(ev.clientX, ev.clientY);
-    const h = engine.castRay(q.x, q.y);
-    if (!h || !shape) return;
-    shape.rho = Math.acos(clampDot(shape.a[0] * h.nx + shape.a[1] * h.ny + shape.a[2] * h.nz));
-    const bearing = bearingOf(gu, gv, h.nx, h.ny, h.nz);
-    // dead-center: hold the current rotation
-    if (bearing !== null) shape.rotate = bearing * 180 / Math.PI;
-    refresh();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-}
-
-// Current handle positions in canvas pixels, for forgiving grabbing
-function shapeHandlePoints(): Array<{ role: HandleRole; sx: number; sy: number }> {
-  if (!shape) return [];
-  const pts: Array<{ role: HandleRole; sx: number; sy: number }> = [];
-  const pa = projectDirPct(shape.a);
-  pts.push({ role: 'a', sx: pa.sx, sy: pa.sy });
-  if (shape.kind === 'line') {
-    const pb = projectDirPct(shape.b);
-    pts.push({ role: 'b', sx: pb.sx, sy: pb.sy });
-    const pr = projectDirPct(lineRotGripDir());
-    pts.push({ role: 'rot', sx: pr.sx, sy: pr.sy });
-  } else {
-    const pg = projectDirPct(circleDir(shape.a, shape.rho, shape.rotate * Math.PI / 180));
-    pts.push({ role: 'r', sx: pg.sx, sy: pg.sy });
-  }
-  return pts;
-}
-
-// Drawing: in a shape mode, dragging on the sphere replaces the shape —
-// unless the press lands near an existing handle, which edits it instead
-canvas.addEventListener('pointerdown', e => {
-  if (mode === 'points') return;
-  if (selectedLight >= 0) closeInspector();
-  const p = eventToCanvasPixels(e.clientX, e.clientY);
-  const GRAB_RADIUS = 14; // canvas px — forgiving, so grabs never redraw by accident
-  for (const h of shapeHandlePoints()) {
-    if (Math.hypot(p.x - h.sx, p.y - h.sy) < GRAB_RADIUS) {
-      e.preventDefault();
-      beginHandleDrag(e, h.role);
-      return;
-    }
-  }
-  const hit = engine.castRay(p.x, p.y);
-  if (!hit) return;
-  e.preventDefault();
-  const start = new Float64Array([hit.nx, hit.ny, hit.nz]);
-  // a bare click (no drag) still yields a visible, sampleable shape —
-  // a circle of min radius, or a short eastward arc; dragging or the
-  // handles can take both anywhere afterwards
-  const MIN_ARC = 0.35;
-  const lineEnd = new Float64Array(start);
-  if (mode === 'line') {
-    const cA = Math.cos(MIN_ARC), sA = Math.sin(MIN_ARC);
-    lineEnd[0] = start[0] * cA + start[2] * sA;
-    lineEnd[2] = -start[0] * sA + start[2] * cA;
-  }
-  shape = mode === 'line'
-    ? { kind: 'line', a: start, b: lineEnd, rho: 0, rotate: 0 }
-    : { kind: 'circle', a: start, b: lineEnd, rho: MIN_ARC, rotate: 0 };
-  let dragging = false;
-  const move = (ev: PointerEvent) => {
-    const q = eventToCanvasPixels(ev.clientX, ev.clientY);
-    // a couple of pixels of press jiggle is still a click — the initial
-    // shape only starts following the cursor after real movement
-    if (!dragging && Math.hypot(q.x - p.x, q.y - p.y) < 5) return;
-    dragging = true;
-    const h2 = engine.castRay(q.x, q.y);
-    if (h2 && shape) {
-      if (shape.kind === 'line') {
-        shape.b[0] = h2.nx; shape.b[1] = h2.ny; shape.b[2] = h2.nz;
-      } else {
-        shape.rho = Math.acos(clampDot(shape.a[0] * h2.nx + shape.a[1] * h2.ny + shape.a[2] * h2.nz));
-      }
-      recomputeShapeColors();
-      updateShapeOverlay();
-      updateStops();
-    }
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-  recomputeShapeColors();
-  updateShapeOverlay();
-  updateStops();
-});
-
-shapeHandles.addEventListener('pointerdown', e => {
-  const el = (e.target as HTMLElement).closest('.shape-handle') as HTMLElement | null;
-  if (!el || !shape) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (selectedLight >= 0) closeInspector();
-  beginHandleDrag(e, el.dataset.handle as HandleRole);
-});
-
-function deleteShape() {
-  shape = null;
-  shapeColors = [];
-  updateShapeOverlay();
-  updateStops();
-}
+// ---------------------------------------------------------------- toolbar: mode / count / spacing
 
 const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.seg__btn[data-mode]'));
 const shapeCountWrap = document.getElementById('shapeCountWrap')!;
@@ -1217,50 +234,19 @@ const shapeCountPlus = document.getElementById('shapeCountPlus')!;
 const spacingSeg = document.getElementById('spacingSeg')!;
 const spacingButtons = Array.from(spacingSeg.querySelectorAll<HTMLButtonElement>('.seg__btn'));
 
-function normalize3(x: number, y: number, z: number) {
-  const l = Math.sqrt(x * x + y * y + z * z) || 1;
-  return new Float64Array([x / l, y / l, z / l]);
-}
-
-// Every mode starts populated, so switching always shows something to edit
-function ensureModeDefaults() {
-  if (mode === 'points') {
-    if (samples.length === 0) createSampleAt(new Float64Array([0, 0, -1]));
-  } else if (mode === 'circle') {
-    if (!shape || shape.kind !== 'circle') {
-      const center = new Float64Array([0, 0, -1]); // facing the camera
-      shape = { kind: 'circle', a: center, b: new Float64Array(center), rho: Math.asin(0.8), rotate: 0 };
-    }
-  } else if (mode === 'line') {
-    if (!shape || shape.kind !== 'line') {
-      shape = {
-        kind: 'line',
-        a: normalize3(-0.6, 0.35, -0.75),
-        b: normalize3(0.6, -0.35, -0.75),
-        rho: 0,
-        rotate: 0,
-      };
-    }
-  }
-}
-
-function setMode(next: SampleMode) {
-  mode = next;
+function syncModeUI() {
+  const mode = view.mode;
   segButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.mode === mode));
   shapeCountWrap.hidden = mode === 'points';
   // spacing only matters for open shapes: on a closed circle smoothstep just
   // bunches points at the seam, so the UI offers it for lines only
   spacingSeg.hidden = mode !== 'line';
-  sampleLayer.toggleAttribute('hidden', mode !== 'points');
-  ensureModeDefaults();
-  recomputeShapeColors();
-  updateShapeOverlay();
-  updateStops();
 }
 
 segButtons.forEach(b => b.addEventListener('click', () => {
   sound.playTack();
-  setMode(b.dataset.mode as SampleMode);
+  view.mode = b.dataset.mode as SampleMode;
+  syncModeUI();
 }));
 
 // OKPalette-style numberslider: - / + steppers around a number input,
@@ -1268,52 +254,43 @@ segButtons.forEach(b => b.addEventListener('click', () => {
 function syncShapeCountFill() {
   const min = parseInt(shapeCountInput.min, 10) || 2;
   const max = parseInt(shapeCountInput.max, 10) || 32;
-  shapeCountSlider.style.setProperty('--relval', String((shapeCount - min) / (max - min)));
-}
-
-function shapeCountChanged() {
-  syncShapeCountFill();
-  recomputeShapeColors();
-  updateShapeOverlay();
-  updateStops();
+  shapeCountSlider.style.setProperty('--relval', String((view.count - min) / (max - min)));
 }
 
 function applyShapeCount(next: number) {
   const min = parseInt(shapeCountInput.min, 10) || 2;
   const max = parseInt(shapeCountInput.max, 10) || 32;
-  shapeCount = Math.min(max, Math.max(min, next));
-  shapeCountInput.value = String(shapeCount);
-  shapeCountChanged();
+  view.count = Math.min(max, Math.max(min, next));
+  shapeCountInput.value = String(view.count);
+  syncShapeCountFill();
 }
 
 shapeCountInput.addEventListener('input', () => {
   // while typing, track valid values without rewriting the field
   const v = parseInt(shapeCountInput.value, 10);
   if (Number.isNaN(v)) return;
-  shapeCount = Math.min(32, Math.max(2, v));
-  shapeCountChanged();
+  view.count = Math.min(32, Math.max(2, v));
+  syncShapeCountFill();
 });
 shapeCountInput.addEventListener('change', () => {
-  applyShapeCount(parseInt(shapeCountInput.value, 10) || shapeCount);
+  applyShapeCount(parseInt(shapeCountInput.value, 10) || view.count);
 });
 shapeCountMinus.addEventListener('click', () => {
   sound.playTick();
-  applyShapeCount(shapeCount - 1);
+  applyShapeCount(view.count - 1);
 });
 shapeCountPlus.addEventListener('click', () => {
   sound.playTick();
-  applyShapeCount(shapeCount + 1);
+  applyShapeCount(view.count + 1);
 });
 
 spacingButtons.forEach(b => b.addEventListener('click', () => {
-  shapeSpacing = b.dataset.spacing as keyof typeof distributions;
+  view.spacing = b.dataset.spacing as SpacingName;
   spacingButtons.forEach(x => x.classList.toggle('seg__btn--active', x === b));
-  recomputeShapeColors();
-  updateShapeOverlay();
-  updateStops();
 }));
 
-// Inspector popover — a projection of lights[selectedLight]
+// ---------------------------------------------------------------- inspector
+
 const inspTitle = document.getElementById('inspTitle')!;
 const inspType = document.getElementById('inspType') as HTMLSelectElement;
 const inspColor = document.getElementById('inspColor') as HTMLInputElement;
@@ -1325,13 +302,10 @@ const inspDistRow = document.getElementById('inspDistRow')!;
 const inspAngleRow = document.getElementById('inspAngleRow')!;
 const inspSizeRow = document.getElementById('inspSizeRow')!;
 
-function openInspector(i: number) {
-  sound.playTack();
-  setControlsOpen(true);
-  lightHint.hidden = true;
-  selectedLight = i;
-  const l = lights[i];
-  inspTitle.textContent = `Light ${i + 1}`;
+function syncInspectorUI() {
+  if (selectedLight < 0) return;
+  const l = lights[selectedLight];
+  inspTitle.textContent = `Light ${selectedLight + 1}`;
   inspType.value = l.type;
   inspColor.value = l.hex;
   inspIntensity.value = l.intensity.toString();
@@ -1347,130 +321,74 @@ function openInspector(i: number) {
   syncOutputs();
   updateOrbitGlobe();
   inspector.hidden = false;
-  updateLightMarkers();
+}
+
+function openInspector(i: number) {
+  sound.playTack();
+  setControlsOpen(true);
+  lightHint.hidden = true;
+  selectedLight = i;
+  view.selectLight(i); // no-ops when already selected — sync directly too
+  syncInspectorUI();
+  updateLightRail();
 }
 
 function closeInspector() {
+  view.selectLight(-1);
   selectedLight = -1;
   inspector.hidden = true;
   lightHint.hidden = false;
-  updateLightMarkers();
+  updateLightRail();
 }
 
-function selectLight(i: number) {
-  sound.playTack();
-  selectedLight = i;
-  if (controlsOpen()) openInspector(i);
-  updateLightMarkers();
-}
-
-function beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
-  if (selectedLight < 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const li = selectedLight;
-
-  let distDrag: { uOf: (x: number, y: number) => number; solve: (u: number) => number; uOffset: number } | null = null;
-  if (kind === 'dist') {
-    const lx = lightPositions[li * 3], ly = lightPositions[li * 3 + 1], lz = lightPositions[li * 3 + 2];
-    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
-    const dx = lx / llen, dy = ly / llen, dz = lz / llen;
-    const proj = (d: number) => {
-      const s = BEAD_F * state.sphereRadius + (1 - BEAD_F) * d;
-      return engine.worldToScreen(dx * s, dy * s, dz * s);
-    };
-    // cap so no search sample projects from behind the camera
-    let hiCap = MAX_LIGHT_DISTANCE;
-    if (dz < 0) {
-      const sLim = (state.cameraZ + 0.75) / dz;
-      const dLim = (sLim - BEAD_F * state.sphereRadius) / (1 - BEAD_F);
-      hiCap = Math.max(state.sphereRadius, Math.min(hiCap, dLim));
-    }
-    const A = proj(state.sphereRadius);
-    const B = proj(hiCap);
-    const abx = B.x - A.x, aby = B.y - A.y;
-    const ab2 = Math.max(abx * abx + aby * aby, 1);
-    const abLen = Math.sqrt(ab2);
-    const uOf = (x: number, y: number) =>
-      Math.max(0, Math.min(1, ((x - A.x) * abx + (y - A.y) * aby) / ab2));
-    // the bead's screen path is a line, monotone in dist
-    const solve = (u: number) => {
-      const target = u * abLen;
-      let lo = state.sphereRadius, hi = hiCap;
-      for (let k = 0; k < 24; k++) {
-        const mid = (lo + hi) / 2;
-        const P = proj(mid);
-        if (Math.hypot(P.x - A.x, P.y - A.y) < target) lo = mid;
-        else hi = mid;
-      }
-      return (lo + hi) / 2;
-    };
-    const p0 = eventToCanvasPixels(e.clientX, e.clientY, false);
-    const b = beadWorld(li);
-    const bp = engine.worldToScreen(b.x, b.y, b.z);
-    distDrag = { uOf, solve, uOffset: uOf(bp.x, bp.y) - uOf(p0.x, p0.y) };
+view.addEventListener('lightselect', e => {
+  const idx = (e as CustomEvent).detail.index as number | null;
+  selectedLight = idx ?? -1;
+  if (idx === null) {
+    inspector.hidden = true;
+    lightHint.hidden = false;
+  } else {
+    sound.playTack();
+    lightHint.hidden = true;
+    if (controlsOpen()) syncInspectorUI();
   }
-
-  const move = (ev: PointerEvent) => {
-    const p = eventToCanvasPixels(ev.clientX, ev.clientY, false);
-    const l = lights[li];
-    if (kind === 'intensity') {
-      const sp = engine.worldToScreen(lightPositions[li * 3], lightPositions[li * 3 + 1], lightPositions[li * 3 + 2]);
-      const r = Math.hypot(p.x - sp.x, p.y - sp.y);
-      const x = Math.max(0, Math.min(INT_MAX / (INT_MAX + 1), (r - INT_R0) / INT_R1));
-      l.intensity = Math.round((x / (1 - x)) * 100) / 100;
-      inspIntensity.value = l.intensity.toString();
-    } else if (distDrag) {
-      const u = Math.max(0, Math.min(1, distDrag.uOf(p.x, p.y) + distDrag.uOffset));
-      l.dist = Math.round(distDrag.solve(u) * 100) / 100;
-      inspDist.value = l.dist.toString();
-    }
-    sound.playTick();
-    syncOutputs();
-    update();
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-}
+  updateLightRail();
+});
 
 inspType.addEventListener('change', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].type = inspType.value as Light['type'];
-  openInspector(selectedLight); // re-project row visibility
-  update();
+  syncInspectorUI(); // re-project row visibility
+  view.update();
 });
 inspColor.addEventListener('input', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].hex = inspColor.value;
-  update();
+  view.update();
 });
 inspIntensity.addEventListener('input', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].intensity = parseFloat(inspIntensity.value);
   syncOutputs();
-  update();
+  view.update();
 });
 inspDist.addEventListener('input', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].dist = parseFloat(inspDist.value);
   syncOutputs();
-  update();
+  view.update();
 });
 inspAngle.addEventListener('input', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].angle = parseFloat(inspAngle.value);
   syncOutputs();
-  update();
+  view.update();
 });
 inspSize.addEventListener('input', () => {
   if (selectedLight < 0) return;
   lights[selectedLight].size = parseFloat(inspSize.value);
   syncOutputs();
-  update();
+  view.update();
 });
 
 // ---------------------------------------------------------------- scene popover
@@ -1500,14 +418,13 @@ function readSceneInputs() {
   state.wallReflect.top = rv;
   state.wallReflect.bottom = rv;
   state.areaQuality = Math.max(1, parseInt(scn.quality.value, 10) || 1);
-  update();
+  view.update();
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
 // Scene presets. The select shows a preset name only while the scene still IS that preset:
-// any manual edit funnels through update(), which snaps it back to None.
+// any manual edit funnels through the view's update event, which snaps it back to None.
 const presetSelect = document.getElementById('scnPreset') as HTMLSelectElement;
-let applyingPreset = false;
 PRESETS.forEach((p, i) => presetSelect.add(new Option(p.name, String(i))));
 presetSelect.addEventListener('change', () => {
   const preset = PRESETS[parseInt(presetSelect.value, 10)];
@@ -1524,23 +441,17 @@ presetSelect.addEventListener('change', () => {
   // Each preset ships a sampling shape tuned to its lighting, so loading one
   // immediately shows a considered palette
   const ps = preset.shape;
-  shape = {
-    kind: ps.kind,
-    a: new Float64Array(ps.a),
-    b: new Float64Array(ps.b ?? ps.a),
-    rho: ps.rho ?? 0,
-    rotate: ps.rotate ?? 0,
-  };
-  shapeCount = ps.count;
-  shapeCountInput.value = String(shapeCount);
+  view.count = ps.count;
+  shapeCountInput.value = String(view.count);
   syncShapeCountFill();
-  shapeSpacing = ps.spacing ?? 'linear';
-  spacingButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.spacing === shapeSpacing));
-  setMode(ps.kind); // shape is already the right kind, so mode defaults keep it
+  view.spacing = ps.spacing ?? 'linear';
+  spacingButtons.forEach(b => b.classList.toggle('seg__btn--active', b.dataset.spacing === view.spacing));
+  view.mode = ps.kind; // set before the shape so mode defaults don't replace it
+  view.shape = ps;
+  syncModeUI();
   syncSceneInputs();
-  if (selectedLight >= 0) openInspector(selectedLight); // re-sync open inspector
-  update();
-  updateLibSnippet();
+  if (selectedLight >= 0) syncInspectorUI(); // re-sync open inspector
+  view.update();
   sound.playSuccess();
   applyingPreset = false;
 });
@@ -1568,7 +479,7 @@ function syncOutputs() {
   rangeSyncs.forEach(sync => sync());
 }
 
-// ---------------------------------------------------------------- gradient stops
+// ---------------------------------------------------------------- drawers
 
 const colorOverlay = document.getElementById('colorOverlay')!;
 const drawerToggleBtn = document.getElementById('drawerToggleBtn')!;
@@ -1584,7 +495,6 @@ document.getElementById('closeColorsBtn')!.addEventListener('click', e => {
   e.stopPropagation();
   setColorsOpen(false);
 });
-let selectedSample: Sample | null = null;
 
 const hex6 = (c: ArrayLike<number>) =>
   toSRGB8(c[0]).toString(16).padStart(2, '0') +
@@ -1657,6 +567,8 @@ libSnippetPre.addEventListener('click', async () => {
   } catch { /* clipboard unavailable */ }
 });
 
+// ---------------------------------------------------------------- color names
+
 // Color names via api.color.pizza (debounced + abortable, cached per hex)
 const colorNameCache = new Map<string, string>();
 let nameTimer: number | undefined;
@@ -1676,7 +588,7 @@ function requestColorNames() {
   applyColorNames();
   // Full palette every time: the response's paletteTitle names the drawer,
   // like OKPalette's header (per-hex names still come from the cache)
-  const values = [...new Set(activeColors().map(hex6))];
+  const values = [...new Set(view.rawColors().map(hex6))];
   if (!values.length) {
     paletteNameEl.textContent = '';
     lastPaletteKey = '';
@@ -1701,6 +613,8 @@ function requestColorNames() {
       .catch(() => { /* offline or aborted — rows keep showing their hex */ });
   }, 400);
 }
+
+// ---------------------------------------------------------------- lib snippet
 
 // Living documentation: a snippet that reproduces the current palette
 // headlessly with the ray-color engine
@@ -1732,17 +646,19 @@ function updateLibSnippet() {
     return '{\n' + inner + lines.join(',\n' + inner) + '\n' + indent + '}';
   };
 
+  const mode = view.mode;
+  const shape = view.shape;
   let samplerImport = '';
   let sampler: string;
   if (shape && mode === 'circle') {
     samplerImport = ',\n  sampleCircleDirs';
     const rot = Math.abs(shape.rotate) > 0.05 ? `,\n  { rotate: ${fmt(shape.rotate)} }` : '';
-    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${shapeCount}${rot}\n);`;
+    sampler = `const dirs = sampleCircleDirs(\n  ${vec(shape.a)}, ${fmt(shape.rho)}, ${view.count}${rot}\n);`;
   } else if (shape && mode === 'line') {
     samplerImport = ',\n  sampleLineDirs, distributions';
-    sampler = `const dirs = sampleLineDirs(\n  ${vec(shape.a)},\n  ${vec(shape.b)},\n  ${shapeCount}, distributions.${shapeSpacing}\n);`;
+    sampler = `const dirs = sampleLineDirs(\n  ${vec(shape.a)},\n  ${vec(shape.b)},\n  ${view.count}, distributions.${view.spacing}\n);`;
   } else {
-    sampler = `const dirs = [\n${samples.map(s => '  ' + vec(s.dir)).join(',\n')}\n];`;
+    sampler = `const dirs = [\n${view.sampleDirs().map(d => '  ' + vec(d)).join(',\n')}\n];`;
   }
 
   libSnippetCode.textContent = `import {
@@ -1766,6 +682,8 @@ const hex = palette.map(c =>
     .padStart(2, '0')).join(''));`;
 }
 
+// ---------------------------------------------------------------- palette panel
+
 function renderPalette(colors: ArrayLike<number>[]) {
   paletteEl.innerHTML = '';
   if (colors.length === 0) {
@@ -1780,7 +698,7 @@ function renderPalette(colors: ArrayLike<number>[]) {
     row.className = 'palette__row';
     row.style.setProperty('--i', String(i / colors.length)); // OKPalette's relI
     row.addEventListener('mouseenter', () => sound.playTack());
-    if (mode === 'points' && samples[i] === selectedSample) row.classList.add('palette__row--selected');
+    if (view.mode === 'points' && i === view.selectedSampleIndex) row.classList.add('palette__row--selected');
     const sw = document.createElement('div');
     sw.className = 'palette__swatch';
     sw.style.background = '#' + h;
@@ -1791,7 +709,7 @@ function renderPalette(colors: ArrayLike<number>[]) {
     const name = document.createElement('div');
     name.className = 'palette__row-name';
     name.dataset.hex = h;
-    name.textContent = colorNameCache.get(h) ?? '\u2026';
+    name.textContent = colorNameCache.get(h) ?? '…';
     const deco = document.createElement('span');
     deco.className = 'palette__row-info-deco';
     const hexEl = document.createElement('div');
@@ -1800,9 +718,9 @@ function renderPalette(colors: ArrayLike<number>[]) {
     head.append(name, deco, hexEl);
     info.appendChild(head);
     row.append(sw, info);
-    if (mode === 'points') {
+    if (view.mode === 'points') {
       info.addEventListener('click', () => {
-        if (colorsOpen()) selectSample(samples[i]);
+        if (colorsOpen()) view.selectSampleAt(i);
       });
     }
     paletteEl.appendChild(row);
@@ -1811,7 +729,7 @@ function renderPalette(colors: ArrayLike<number>[]) {
 }
 
 function paletteData() {
-  return activeColors().map(c => {
+  return view.rawColors().map(c => {
     const h = hex6(c);
     return { hex: '#' + h, name: colorNameCache.get(h) || '#' + h };
   });
@@ -1825,6 +743,8 @@ function downloadBlob(blob: Blob, filename: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// ---------------------------------------------------------------- token beam
 
 // Token Beam: live-sync the palette to paired tools (as in OKPalette)
 const tokenBeamBtn = document.getElementById('tokenBeamBtn')!;
@@ -1852,7 +772,7 @@ const buildTokenBeamPayload = () => {
 };
 
 function syncPaletteToTokenBeam() {
-  if (!tokenBeamClient || activeColors().length === 0) return;
+  if (!tokenBeamClient || view.rawColors().length === 0) return;
   tokenBeamClient.sync(buildTokenBeamPayload());
 }
 
@@ -1915,6 +835,8 @@ tokenBeamBtn.addEventListener('click', async e => {
   setTokenBeamLabel(ERROR_TOKEN_BEAM_LABEL);
 });
 
+// ---------------------------------------------------------------- exports
+
 const copyPaletteBtn = document.getElementById('copyPaletteBtn')!;
 copyPaletteBtn.addEventListener('click', async e => {
   e.stopPropagation();
@@ -1933,51 +855,42 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   e.stopPropagation();
   const colors = paletteData();
   if (!colors.length) return;
-  ensureSettledCanvas();
+  const render = view.exportImage(); // settled f64 frame + sample dots
+  if (!render) return;
   // Render + color strip below, like OKPalette's image export
   const stripHeight = 80;
   const out = document.createElement('canvas');
-  out.width = canvas.width;
-  out.height = canvas.height + stripHeight;
+  out.width = render.width;
+  out.height = render.height + stripHeight;
   const octx = out.getContext('2d')!;
-  octx.drawImage(canvas, 0, 0);
-  // The sample dots, as drawn on screen — so the image explains itself
-  if (mode !== 'points' && shape) {
-    shapeSampleDirs().forEach((d, i) => {
-      const p = projectDirPct(d);
-      const col = shapeColors[i];
-      octx.globalAlpha = dirIsBehind(d) ? 0.3 : 1; // faded through the sphere, like on screen
-      octx.beginPath();
-      octx.arc(p.sx, p.sy, 4, 0, Math.PI * 2);
-      octx.fillStyle = col ? `rgb(${toSRGB8(col[0])}, ${toSRGB8(col[1])}, ${toSRGB8(col[2])})` : '#fff';
-      octx.fill();
-      octx.lineWidth = 1.5;
-      octx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-      octx.stroke();
-    });
-    octx.globalAlpha = 1;
-  }
+  octx.drawImage(render, 0, 0);
   const colorWidth = out.width / colors.length;
   colors.forEach((c, i) => {
     octx.fillStyle = c.hex;
-    octx.fillRect(i * colorWidth, canvas.height, colorWidth + 1, stripHeight);
+    octx.fillRect(i * colorWidth, render.height, colorWidth + 1, stripHeight);
   });
   sound.playSuccess();
   // Name the file after the palette when color.pizza has titled the current
   // colors (the title sticks around after edits, so check it isn't stale)
-  const fresh = lastPaletteKey === [...new Set(activeColors().map(hex6))].join(',');
+  const fresh = lastPaletteKey === [...new Set(view.rawColors().map(hex6))].join(',');
   const slug = fresh
     ? (paletteNameEl.textContent ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
     : '';
   out.toBlob(blob => { if (blob) downloadBlob(blob, slug ? `ray-color-${slug}.png` : 'ray-color-palette.png'); });
 });
 
-function activeColors(): ArrayLike<number>[] {
-  return mode === 'points' ? samples.map(s => s.color) : shapeColors;
+// ---------------------------------------------------------------- view events
+
+function updateStops() {
+  const colors = view.rawColors();
+  document.documentElement.style.setProperty('--stops', colors.length ? cssStops() : 'transparent 0% 100%');
+  renderPalette(colors);
+  updateLibSnippet();
+  syncPaletteToTokenBeam();
 }
 
 function cssStops(): string {
-  const colors = activeColors();
+  const colors = view.rawColors();
   const seg = 100 / colors.length;
   return colors.map((c, i) => {
     // Same sRGB encoding as the renderer, so stops match the pixels exactly
@@ -1987,165 +900,61 @@ function cssStops(): string {
   }).join(', ');
 }
 
-function updateStops() {
-  const colors = activeColors();
-  document.documentElement.style.setProperty('--stops', colors.length ? cssStops() : 'transparent 0% 100%');
-  renderPalette(colors);
-  updateSamplesRotWidget(); // every sample mutation funnels through here
-  updateLibSnippet();
-  syncPaletteToTokenBeam();
-}
+view.addEventListener('palettechange', () => updateStops());
 
-function selectSample(sample: Sample | null) {
-  selectedSample = sample;
-  samples.forEach(s => s.marker.classList.toggle('marker--selected', s === selectedSample));
-  document.querySelectorAll('.palette__row').forEach((row, i) =>
-    row.classList.toggle('palette__row--selected', mode === 'points' && samples[i] === selectedSample));
-}
+view.addEventListener('input', e => {
+  sound.playTick();
+  const kind = (e as CustomEvent).detail.kind as InputKind;
+  // keep the chrome's mirrors of view-driven edits honest
+  if (kind === 'camera') {
+    scn.camera.value = String(state.cameraZ);
+    syncOutputs();
+  } else if (kind === 'light-intensity' && selectedLight >= 0) {
+    inspIntensity.value = lights[selectedLight].intensity.toString();
+    syncOutputs();
+  } else if (kind === 'light-dist' && selectedLight >= 0) {
+    inspDist.value = lights[selectedLight].dist.toString();
+    syncOutputs();
+  }
+});
 
-function deleteSelectedSample() {
-  if (!selectedSample) return;
-  if (samples.length <= 1) return; // one point is the minimum
-  selectedSample.marker.remove();
-  samples = samples.filter(s => s !== selectedSample);
-  selectedSample = null;
-  updateStops();
-}
-
-// ---------------------------------------------------------------- update pipeline
-
-function update() {
-  engine.commit();
+view.addEventListener('viewupdate', () => {
   // Any change that isn't a preset load means the scene is no longer that
   // preset — snap the picker back to None
   if (!applyingPreset && presetSelect.value !== '') presetSelect.value = '';
-  samples.forEach(sample => {
-    const color = engine.shade(sample.dir);
-    sample.color[0] = color.r;
-    sample.color[1] = color.g;
-    sample.color[2] = color.b;
-    updateSampleMarker(sample);
-  });
-  recomputeShapeColors(); // the shape re-lights with the scene, like points do
-  updateShapeOverlay();
-  updateStops();
-  updateLightMarkers();
   if (selectedLight >= 0) {
     inspDist.value = lights[selectedLight].dist.toString();
     updateOrbitGlobe();
   }
+  updateLightRail();
   syncOutputs();
-  requestRender();
-}
-
-// ---------------------------------------------------------------- interactions
-
-canvas.addEventListener('click', event => {
-  if (selectedLight >= 0) {
-    closeInspector();
-    return; // first click just dismisses the inspector
-  }
-  if (mode !== 'points') return; // shape modes sample by dragging
-  const { x, y } = eventToCanvasPixels(event.clientX, event.clientY);
-  const hit = engine.castRay(x, y);
-  if (!hit) return;
-  createSampleAt(new Float64Array([hit.nx, hit.ny, hit.nz]));
-  sound.playTack();
 });
 
-function createSampleAt(dir: Float64Array) {
-  const color = engine.shade(dir);
-  const marker = document.createElement('div');
-  marker.className = 'marker sample-marker';
-  const sample: Sample = { dir, color: new Float64Array([color.r, color.g, color.b]), marker };
-  marker.addEventListener('pointerdown', e => beginSampleDrag(e, sample));
-  sampleLayer.appendChild(marker);
-  updateSampleMarker(sample);
-  samples.push(sample);
-  selectSample(sample); // a fresh sample is the active one — backspace removes it
-  updateStops();
-}
-
-function beginSampleDrag(event: PointerEvent, sample: Sample) {
-  event.preventDefault();
-  event.stopPropagation();
-  if (selectedLight >= 0) closeInspector();
-  selectSample(sample);
-  beginSurfaceDrag(event, sample.dir, () => {
-    const color = engine.shade(sample.dir);
-    sample.color[0] = color.r;
-    sample.color[1] = color.g;
-    sample.color[2] = color.b;
-    updateSampleMarker(sample);
-    updateStops();
-  });
-}
-
-let draggedLight = -1;
-
-lightLayer.addEventListener('pointerdown', e => {
-  const gripEl = (e.target as HTMLElement).closest('[data-grip]') as HTMLElement | null;
-  if (gripEl) {
-    beginGripDrag(e, gripEl.dataset.grip as 'intensity' | 'dist');
-    return;
-  }
-  const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
-  if (!markerEl || markerEl.dataset.light === undefined) return;
-  e.preventDefault();
-  draggedLight = parseInt(markerEl.dataset.light, 10);
-  const li = draggedLight;
-  if (selectedLight !== li) selectLight(li);
-  const len = Math.hypot(lightPositions[li * 3], lightPositions[li * 3 + 1], lightPositions[li * 3 + 2]) || 1;
-  const dir = new Float64Array([
-    lightPositions[li * 3] / len,
-    lightPositions[li * 3 + 1] / len,
-    lightPositions[li * 3 + 2] / len,
-  ]);
-  beginSurfaceDrag(e, dir, () => {
-    const l = lights[li];
-    const a = positionToAngles(dir[0], dir[1], dir[2]);
-    l.yaw = Math.round(a.yaw);
-    l.pitch = Math.round(Math.max(-89, Math.min(89, a.pitch)));
-    update();
-  });
-  const up = () => {
-    window.removeEventListener('pointerup', up);
-    draggedLight = -1;
-  };
-  window.addEventListener('pointerup', up);
+view.addEventListener('sampleselect', () => {
+  document.querySelectorAll('.palette__row').forEach((row, i) =>
+    row.classList.toggle('palette__row--selected', view.mode === 'points' && i === view.selectedSampleIndex));
 });
 
-lightLayer.addEventListener('wheel', e => {
-  const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
-  if (!markerEl || markerEl.dataset.light === undefined) return;
-  e.preventDefault();
-  const l = lights[parseInt(markerEl.dataset.light, 10)];
-  if (l.type === 'directional') return; // distance means nothing for a directional light
-  l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(state.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
-  update();
-}, { passive: false });
+view.addEventListener('settled', () => scheduleFavicon());
 
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  state.cameraZ = Math.min(-2, Math.max(-10, state.cameraZ - e.deltaY * 0.005));
-  // keep the drawer's dolly slider honest
-  scn.camera.value = String(state.cameraZ);
-  syncOutputs();
-  update();
-}, { passive: false });
+view.addEventListener('change', e => {
+  const kind = (e as CustomEvent).detail.kind as InputKind;
+  if (kind === 'sample') sound.playTack();
+});
+
+// ---------------------------------------------------------------- keyboard
 
 window.addEventListener('keydown', e => {
   const target = e.target as HTMLElement;
   const inField = target.tagName === 'INPUT' || target.tagName === 'SELECT';
   if (e.key === 'Escape') {
     closeInspector();
-    selectSample(null);
+    view.clearSampleSelection();
     setColorsOpen(false);
     setControlsOpen(false);
   } else if ((e.key === 'Backspace' || e.key === 'Delete') && !inField) {
     e.preventDefault();
-    if (mode === 'points') deleteSelectedSample();
-    else deleteShape();
+    view.deleteSelection();
   } else if ((e.key === '1' || e.key === '2' || e.key === '3') && !inField) {
     openInspector(parseInt(e.key, 10) - 1);
   }
@@ -2194,7 +1003,7 @@ function playFrame(now: number) {
     l.pitch = Math.max(-89, Math.min(89, Math.asin(Math.max(-1, Math.min(1, vy))) * 180 / Math.PI));
     l.yaw = Math.atan2(vz, vx) * 180 / Math.PI;
   }
-  update();
+  view.update();
   requestAnimationFrame(playFrame);
 }
 
@@ -2237,26 +1046,8 @@ function enhanceRangeInputs() {
 const rangeSyncs: Array<() => void> = [];
 
 enhanceRangeInputs();
-
-// The engine's buffers are sized at creation, so a layout change means a new
-// engine — same scene/lights refs, so nothing else needs rewiring
-let resizeTimer: number | undefined;
-window.addEventListener('resize', () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => {
-    const size = displaySize();
-    if (size === canvas.width) return;
-    canvas.width = canvas.height = size;
-    imageData = ctx!.createImageData(size, size);
-    engine = createEngine(size, size, state, lights);
-    lightPositions = engine.lightPositions;
-    glPreview?.resize(size, size);
-    update();
-    updateLibSnippet();
-  }, 150);
-});
-
+syncModeUI();
+syncShapeCountFill();
+updateLightRail();
 syncOutputs();
-engine.commit();
-setMode(mode); // applies mode defaults AND the toolbar's mode-specific controls
-update();
+updateStops();

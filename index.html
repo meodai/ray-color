@@ -68,15 +68,7 @@
 
       <div class="l-stage">
       <div class="l-body">
-        <div class="viewport" id="viewport">
-          <canvas id="canvas" width="400" height="400"></canvas>
-          <svg id="gizmo" aria-hidden="true"></svg>
-          <svg id="shape-svg" aria-hidden="true"></svg>
-          <div id="light-layer"></div>
-          <div id="sample-layer"></div>
-          <div id="shape-handles"></div>
-
-        </div>
+        <ray-color-view id="view" controls mode="circle" count="7"></ray-color-view>
       </div>
 
       <button class="button button--icon drawer-toggle" id="drawerToggleBtn" title="Open the palette drawer" aria-controls="colorOverlay">
