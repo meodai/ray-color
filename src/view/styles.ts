@@ -256,9 +256,11 @@ export const VIEW_STYLES = `
   pointer-events: auto;
   cursor: grab;
   touch-action: none;
+  /* the dark separator needs real weight — an intensely lit backdrop
+     swallows the white ring, and a 40%-alpha hairline with it */
   box-shadow:
     0 0 0 1.5px var(--rcv-white),
-    0 0 0 2.5px rgba(0, 0, 0, 0.4);
+    0 0 0 3px rgba(0, 0, 0, 0.55);
 }
 
 .light-marker:active {
