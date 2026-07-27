@@ -529,12 +529,15 @@ export class ViewCore {
           this.lightLayer.appendChild(g);
           return g;
         };
-        const onCanvas = sp.x >= 0 && sp.x <= this.canvas.width && sp.y >= 0 && sp.y <= this.canvas.height;
-        if (onCanvas) {
-          const r = intensityRingRadius(this.lights[i].intensity);
-          const ga = -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
-          addGrip('intensity', sp.x + Math.cos(ga) * r, sp.y + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
-        }
+        // Edge-clamped lights keep their intensity ring: it rides the clamped
+        // marker, with the grip aimed inward so it stays reachable
+        const { x: ax, y: ay } = this.clampToCanvasAlongLine(sp.x, sp.y);
+        const clamped = ax !== sp.x || ay !== sp.y;
+        const r = intensityRingRadius(this.lights[i].intensity);
+        const ga = clamped
+          ? Math.atan2(this.canvas.height / 2 - ay, this.canvas.width / 2 - ax)
+          : -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
+        addGrip('intensity', ax + Math.cos(ga) * r, ay + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
         // edge-clamped as a remote when the beam leaves the canvas
         const b = this.beadWorld(i);
         const bp = this._engine.worldToScreen(b.x, b.y, b.z);
@@ -585,7 +588,9 @@ export class ViewCore {
       circle.setAttribute('class', 'gizmo-area');
       this.gizmoSvg.appendChild(circle);
     }
-    if (cx === screenPos.x && cy === screenPos.y) {
+    {
+      // intensity ring — drawn around the clamped marker when the light is
+      // off-canvas, so it stays editable without bringing the light back
       const r = intensityRingRadius(this.lights[i].intensity);
       for (const [width, cls] of [['3', 'shape-path-casing'], ['1.5', 'shape-path']] as const) {
         const ring = document.createElementNS(NS, 'circle');
@@ -695,8 +700,8 @@ export class ViewCore {
       const ticks = document.createElementNS(NS, 'path') as SVGPathElement;
       ticks.setAttribute('d', tickD);
       // inline style: the class CSS carries its own stroke-width, which
-      // beats the presentation attribute
-      ticks.style.strokeWidth = '0.6';
+      // beats the presentation attribute — tracks the theme width at 40%
+      ticks.style.strokeWidth = 'calc(var(--rcv-stroke-width, 1.5px) * 0.4)';
       ticks.setAttribute('class', 'shape-path');
       this.gizmoSvg.appendChild(ticks);
     }
@@ -853,7 +858,10 @@ export class ViewCore {
       const l = this.lights[li];
       if (kind === 'intensity') {
         const sp = this._engine.worldToScreen(this.lightPositions[li * 3], this.lightPositions[li * 3 + 1], this.lightPositions[li * 3 + 2]);
-        const r = Math.hypot(p.x - sp.x, p.y - sp.y);
+        // measure from the same anchor the ring is drawn around (edge-clamped
+        // when the light is off-canvas)
+        const a = this.clampToCanvasAlongLine(sp.x, sp.y);
+        const r = Math.hypot(p.x - a.x, p.y - a.y);
         const x = Math.max(0, Math.min(INT_MAX / (INT_MAX + 1), (r - INT_R0) / INT_R1));
         l.intensity = Math.round((x / (1 - x)) * 100) / 100;
       } else if (distDrag) {

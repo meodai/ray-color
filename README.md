@@ -154,6 +154,22 @@ opts out of the WebGL2 preview at runtime; the interactive preview is f32 on
 the GPU, but the settled frame and every sampled color always come from the
 f64 CPU engine.
 
+The overlay styling is themable through CSS custom properties on the element
+(or any ancestor):
+
+```css
+ray-color-view {
+  --rc-stroke: oklch(85% 0.2 200);  /* gizmo + shape strokes, rings, dots */
+  --rc-stroke-back: rgba(255 255 255 / .2); /* faded through-the-sphere parts */
+  --rc-casing: rgba(0 0 0 / .6);    /* contrast casing behind the strokes */
+  --rc-stroke-width: 2px;
+  --rc-casing-width: 4px;
+}
+```
+
+`--bg` / `--text` flow in the same way for the handle chrome and canvas
+frame.
+
 ### Mirror walls
 
 `scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror).

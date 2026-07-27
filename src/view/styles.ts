@@ -10,6 +10,18 @@ export const VIEW_STYLES = `
   --rcv-bg: var(--bg, light-dark(#fff, #292f2f));
   --rcv-text: var(--text, light-dark(#292f2f, #fff));
   --rcv-line: var(--s-line, 1px);
+  /* Overlay theming — set these on the element (or any ancestor) to restyle
+     the gizmo and shape strokes without touching the component:
+       --rc-stroke         main stroke color (paths, rings, dots)
+       --rc-stroke-back    the faded through-the-sphere portions
+       --rc-casing         contrast casing behind the main strokes
+       --rc-stroke-width   main stroke width
+       --rc-casing-width   casing stroke width */
+  --rcv-stroke: var(--rc-stroke, rgba(255, 255, 255, 0.9));
+  --rcv-stroke-back: var(--rc-stroke-back, rgba(255, 255, 255, 0.25));
+  --rcv-casing: var(--rc-casing, rgba(0, 0, 0, 0.5));
+  --rcv-stroke-width: var(--rc-stroke-width, 1.5px);
+  --rcv-casing-width: var(--rc-casing-width, 3px);
 }
 
 .viewport {
@@ -77,27 +89,27 @@ export const VIEW_STYLES = `
 
 .shape-path-casing {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.5);
-  stroke-width: 3;
+  stroke: var(--rcv-casing);
+  stroke-width: var(--rcv-casing-width);
   stroke-linecap: round;
 }
 
 .shape-path {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 1.5;
+  stroke: var(--rcv-stroke);
+  stroke-width: var(--rcv-stroke-width);
   stroke-linecap: round;
 }
 
 .shape-path--back {
-  stroke: rgba(255, 255, 255, 0.25);
-  stroke-width: 1;
+  stroke: var(--rcv-stroke-back);
+  stroke-width: calc(var(--rcv-stroke-width) * 0.67);
   stroke-dasharray: 2 4;
 }
 
 .shape-dot {
-  stroke: rgba(255, 255, 255, 0.95);
-  stroke-width: 1;
+  stroke: var(--rcv-stroke);
+  stroke-width: calc(var(--rcv-stroke-width) * 0.67);
   paint-order: stroke;
 }
 
@@ -154,27 +166,29 @@ export const VIEW_STYLES = `
 
 .gizmo-line-casing {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.5);
+  stroke: var(--rcv-casing);
+  stroke-width: var(--rcv-casing-width);
   stroke-linecap: round;
 }
 
 .gizmo-line {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.85);
+  stroke: var(--rcv-stroke);
+  stroke-width: calc(var(--rcv-stroke-width) * 0.67);
   stroke-dasharray: 4 3;
   stroke-linecap: round;
 }
 
 .gizmo-line--hidden {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.25);
-  stroke-width: 1;
+  stroke: var(--rcv-stroke-back);
+  stroke-width: calc(var(--rcv-stroke-width) * 0.67);
   stroke-dasharray: 2 4;
 }
 
 .gizmo-area {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.7);
+  stroke: var(--rcv-stroke);
   stroke-dasharray: 3 3;
 }
 
@@ -184,7 +198,8 @@ export const VIEW_STYLES = `
   z-index: 4;
 }
 
-/* the shape's stroke recedes while a light is edited; its color dots don't */
+/* while a light's orbit gizmos are up, the shape keeps only its control
+   points and color dots — the connecting strokes get out of the way */
 .shape-svg .shape-path,
 .shape-svg .shape-path-casing,
 .shape-svg .shape-path--back {
@@ -194,7 +209,7 @@ export const VIEW_STYLES = `
 .viewport.light-editing .shape-svg .shape-path,
 .viewport.light-editing .shape-svg .shape-path-casing,
 .viewport.light-editing .shape-svg .shape-path--back {
-  opacity: 0.5;
+  opacity: 0;
 }
 
 /* Invisible wide twin of each orbit ring: the grabbable part */
