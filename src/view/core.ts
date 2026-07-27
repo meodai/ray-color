@@ -1437,18 +1437,16 @@ export class ViewCore {
     });
 
     // NOTE: no camera wheel here — scroll policy belongs to the embedding
-    // page (the playground wires scroll-to-dolly itself). Light markers keep
-    // their wheel because it's part of the light's own control kit.
-    this.lightLayer.addEventListener('wheel', e => {
-      if (!this._controls) return;
-      const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
-      if (!markerEl || markerEl.dataset.light === undefined) return;
-      // handled (or deliberately inert) — never let it fall through to a
-      // host page's own wheel handling on the element
+    // page. The one wheel the component claims: while a light is selected,
+    // scrolling anywhere over the viewport slides that light's distance —
+    // far easier than hitting the small marker with the cursor. With nothing
+    // selected the wheel falls through untouched.
+    this.viewport.addEventListener('wheel', e => {
+      if (!this._controls || this._selectedLight < 0) return;
+      const l = this.lights[this._selectedLight];
+      if (l.type === 'directional') return; // distance means nothing for a directional light
       e.preventDefault();
       e.stopPropagation();
-      const l = this.lights[parseInt(markerEl.dataset.light, 10)];
-      if (l.type === 'directional') return; // distance means nothing for a directional light
       l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
       this.onInput?.('light-dist');
       this.update();
