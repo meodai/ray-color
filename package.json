@@ -11,12 +11,31 @@
       "types": "./lib/engine.d.ts",
       "import": "./lib/ray-color.js",
       "require": "./lib/ray-color.cjs"
+    },
+    "./view": {
+      "types": "./lib/view.d.ts",
+      "import": "./lib/view.js"
+    },
+    "./view/webgl": {
+      "types": "./lib/view-webgl.d.ts",
+      "import": "./lib/view-webgl.js"
+    },
+    "./view/software": {
+      "types": "./lib/view-software.d.ts",
+      "import": "./lib/view-software.js"
     }
   },
   "files": [
     "lib"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./lib/view.js",
+    "./lib/view-webgl.js",
+    "./lib/view-software.js",
+    "./src/view.ts",
+    "./src/view-webgl.ts",
+    "./src/view-software.ts"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

@@ -6,5 +6,5 @@
     "declaration": true,
     "outDir": "lib"
   },
-  "include": ["src/engine.ts"]
+  "include": ["src/engine.ts", "src/gl-preview.ts", "src/view.ts", "src/view-webgl.ts", "src/view-software.ts", "src/view/*.ts"]
 }

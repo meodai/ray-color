@@ -120,6 +120,40 @@ about a center axis (in place). `center` defaults to the group's normalized
 mean direction; a balanced group (zero mean) has no centroid, so pass an
 explicit center there.
 
+## The web component
+
+The playground's whole viewport — renderer, light gizmos, shape editing,
+rotation grips — ships as `<ray-color-view>`, so you can drop the same
+controls next to your own work to debug a scene or harvest palettes:
+
+```js
+import 'ray-color/view';           // WebGL2 preview + f64 CPU renderer (auto fallback)
+import 'ray-color/view/software';  // CPU only — no shader code in the bundle
+```
+
+```html
+<ray-color-view controls mode="circle" count="7" fov="30" camera-z="-9">
+  <ray-color-light hex="#ffaa00" yaw="40"  pitch="10" dist="4" intensity="1.2"></ray-color-light>
+  <ray-color-light hex="#0066ff" yaw="-60" pitch="30" dist="5" intensity="0.8"></ray-color-light>
+  <ray-color-shape kind="circle" a="0 0 -1" rho="0.93" rotate="0"></ray-color-shape>
+</ray-color-view>
+```
+
+The children are two-way: edit an attribute (in devtools, or via a framework
+binding) and the scene follows; drag the on-screen controls and the
+attributes update on release — `outerHTML` is always a reproducible scene.
+`input` fires continuously while dragging, `change` once per gesture,
+`palettechange` whenever the sampled colors move (`e.detail.colors` is
+`[{ hex, rgb }]`). Without children it boots with a default scene; properties
+(`view.scene`, `view.lights`, `view.shape`) expose the live objects — mutate
+and call `view.update()`, same contract as the engine. The playground itself
+runs on this element.
+
+Drop the `controls` attribute for a render-only view. `renderer="software"`
+opts out of the WebGL2 preview at runtime; the interactive preview is f32 on
+the GPU, but the settled frame and every sampled color always come from the
+f64 CPU engine.
+
 ### Mirror walls
 
 `scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror).

@@ -1,0 +1,332 @@
+// Shadow-DOM stylesheet for <ray-color-view> — the viewport styles that used
+// to live in the playground's style.css, scoped to the component. Theme hooks:
+// the host page can set --bg / --text (and --s-line) and they flow through;
+// without them the component falls back to its own light-dark pair.
+export const VIEW_STYLES = `
+:host {
+  display: block;
+  width: 100%;
+  --rcv-white: #fff;
+  --rcv-bg: var(--bg, light-dark(#fff, #292f2f));
+  --rcv-text: var(--text, light-dark(#292f2f, #fff));
+  --rcv-line: var(--s-line, 1px);
+}
+
+.viewport {
+  position: relative;
+  width: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.render-canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  border: var(--rcv-line) solid var(--rcv-text);
+  image-rendering: auto;
+}
+
+/* WebGL2 preview overlay: covers the render canvas exactly while interacting;
+   hidden once the settled CPU render lands, so the frame at rest is always
+   the f64 one. */
+.gl-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1; /* above the render canvas via DOM order, below the overlays */
+  display: block;
+  width: 100%;
+  border: var(--rcv-line) solid var(--rcv-text);
+  pointer-events: none;
+}
+
+.gl-canvas:not(.gl-visible) {
+  display: none;
+}
+
+.gizmo {
+  position: absolute;
+  inset: 0;
+  /* above the shape svg; the marker/handle layers (same z, later in DOM) stay on top */
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible; /* keep rotation arcs usable for edge-clamped lights */
+}
+
+.shape-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.shape-handles {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.shape-path-casing {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.shape-path {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.shape-path--back {
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.shape-dot {
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1;
+  paint-order: stroke;
+}
+
+.shape-dot--back {
+  opacity: .3;
+}
+
+.shape-handle {
+  position: absolute;
+  width: .65rem;
+  height: .65rem;
+  border-radius: 0; /* square = editable geometry, round = color sample */
+  background: var(--rcv-bg);
+  pointer-events: auto;
+  cursor: grab;
+  box-shadow:
+    inset 0 0 0 1.5px var(--rcv-white),
+    inset 0 0 0 3px rgba(0, 0, 0, 0.55);
+}
+
+/* Generous invisible hit area around each handle */
+.shape-handle::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.shape-handle:active {
+  cursor: grabbing;
+}
+
+.shape-handle--grip {
+  border-radius: 50%;
+  width: .55rem;
+  height: .55rem;
+}
+
+.shape-handle--rot {
+  width: .4rem;
+  height: .4rem;
+}
+
+.shape-handle--behind {
+  opacity: .45;
+}
+
+.light-layer,
+.sample-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.gizmo-line-casing {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-linecap: round;
+}
+
+.gizmo-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
+}
+
+.gizmo-line--hidden {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.gizmo-area {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-dasharray: 3 3;
+}
+
+/* light editing wins pointer priority over the shape handles */
+.viewport.light-editing .gizmo,
+.viewport.light-editing .light-layer {
+  z-index: 4;
+}
+
+/* the shape's stroke recedes while a light is edited; its color dots don't */
+.shape-svg .shape-path,
+.shape-svg .shape-path-casing,
+.shape-svg .shape-path--back {
+  transition: opacity 0.15s linear;
+}
+
+.viewport.light-editing .shape-svg .shape-path,
+.viewport.light-editing .shape-svg .shape-path-casing,
+.viewport.light-editing .shape-svg .shape-path--back {
+  opacity: 0.5;
+}
+
+/* Invisible wide twin of each orbit ring: the grabbable part */
+.gizmo-orbit-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  cursor: grab;
+  touch-action: none;
+}
+
+.gizmo-orbit-hit:active {
+  cursor: grabbing;
+}
+
+.marker {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(calc(.35 + var(--scale, 1) * .65));
+  border-radius: 50%;
+}
+
+.light-marker {
+  width: .7rem;
+  height: .7rem;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  box-shadow:
+    0 0 0 1.5px var(--rcv-white),
+    0 0 0 2.5px rgba(0, 0, 0, 0.4);
+}
+
+.light-marker:active {
+  cursor: grabbing;
+}
+
+.light-marker--directional {
+  border-radius: 0;
+  transform: translate(-50%, -50%) rotate(45deg) scale(calc(.35 + var(--scale, 1) * .65));
+}
+
+.marker--offscreen {
+  opacity: .55;
+}
+
+/* Centroid of loose sample points: dashed ring with a knob dot riding it —
+   drag anywhere on it to spin the whole constellation */
+.samples-rot {
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1.5px dashed var(--rcv-white);
+  background: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  transform: translate(-50%, -50%) rotate(var(--spin, 0deg));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .6));
+}
+
+.samples-rot::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.samples-rot::after {
+  content: '';
+  position: absolute;
+  top: -0.15rem;
+  left: 50%;
+  width: .3rem;
+  height: .3rem;
+  margin-left: -0.15rem;
+  border-radius: 50%;
+  background: var(--rcv-white);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+}
+
+.samples-rot:active {
+  cursor: grabbing;
+}
+
+.samples-rot[hidden] {
+  display: none;
+}
+
+/* Hollow ring: the light sits behind the sphere */
+.light-marker--occluded {
+  background: transparent;
+  border: 2px solid;
+  opacity: .85;
+}
+
+.marker--selected {
+  box-shadow:
+    0 0 0 1.5px var(--rcv-white),
+    0 0 0 2.5px rgba(0, 0, 0, 0.4),
+    0 0 0 5px rgba(255, 255, 255, 0.35);
+}
+
+/* .marker's blanket pointer-events: none is written after .shape-handle's
+   auto and was silently winning — restate it here, after the base rule */
+.marker.shape-handle {
+  pointer-events: auto;
+}
+
+.sample-marker {
+  width: .6rem;
+  height: .6rem;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  box-shadow:
+    inset 0 0 0 1px var(--rcv-white),
+    0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.sample-marker:active {
+  cursor: grabbing;
+}
+
+.marker--behind {
+  opacity: .25;
+  pointer-events: none;
+}
+
+/* Render-only mode: no gizmos, no interaction */
+.viewport.no-controls .gizmo,
+.viewport.no-controls .shape-svg,
+.viewport.no-controls .shape-handles,
+.viewport.no-controls .light-layer,
+.viewport.no-controls .sample-layer {
+  display: none;
+}
+`;
