@@ -154,6 +154,12 @@ opts out of the WebGL2 preview at runtime; the interactive preview is f32 on
 the GPU, but the settled frame and every sampled color always come from the
 f64 CPU engine.
 
+The component never captures page scroll: the camera distance is set with
+the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
+scroll-to-dolly is the embedding page's decision — the playground adds it
+with a three-line `wheel` listener. Only the light markers handle wheel
+themselves (orbit distance), and they stop it from bubbling out.
+
 The overlay styling is themable through CSS custom properties on the element
 (or any ancestor):
 

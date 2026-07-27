@@ -906,10 +906,7 @@ view.addEventListener('input', e => {
   sound.playTick();
   const kind = (e as CustomEvent).detail.kind as InputKind;
   // keep the chrome's mirrors of view-driven edits honest
-  if (kind === 'camera') {
-    scn.camera.value = String(state.cameraZ);
-    syncOutputs();
-  } else if (kind === 'light-intensity' && selectedLight >= 0) {
+  if (kind === 'light-intensity' && selectedLight >= 0) {
     inspIntensity.value = lights[selectedLight].intensity.toString();
     syncOutputs();
   } else if (kind === 'light-dist' && selectedLight >= 0) {
@@ -936,6 +933,20 @@ view.addEventListener('sampleselect', () => {
 });
 
 view.addEventListener('settled', () => scheduleFavicon());
+
+// Scroll-to-dolly is the page's call, not the component's — the demo wants
+// it, an embedder deciding their own wheel policy simply doesn't add this.
+// (Light markers keep their own wheel inside the component and never let it
+// bubble out here.) Logged so a nice default camera-z is easy to pick.
+view.addEventListener('wheel', e => {
+  e.preventDefault();
+  state.cameraZ = Math.min(-2, Math.max(-10, state.cameraZ - e.deltaY * 0.005));
+  scn.camera.value = String(state.cameraZ);
+  console.log('[ray-color] camera-z', state.cameraZ.toFixed(2));
+  sound.playTick();
+  syncOutputs();
+  view.update();
+}, { passive: false });
 
 view.addEventListener('change', e => {
   const kind = (e as CustomEvent).detail.kind as InputKind;

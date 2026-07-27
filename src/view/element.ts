@@ -13,7 +13,7 @@
 
 import type { Light, Scene, RGB } from '../engine';
 import { toSRGB8 } from '../engine';
-import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape, type InputKind } from './core';
+import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core';
 import { VIEW_STYLES } from './styles';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
@@ -222,11 +222,10 @@ export class RayColorViewElement extends HTMLElement {
   /** view → DOM, after a gesture ends. Skipped entirely when the page never
    * opted into declarative children. Observer records are swallowed so the
    * reflection can't echo back into syncFromChildren. */
-  private reflectToChildren(kind: InputKind) {
+  private reflectToChildren() {
     const core = this.core!;
     this.applyingAttrs = true;
     try {
-      if (kind === 'camera') this.setAttribute('camera-z', fmt(core.scene.cameraZ));
       const lightEls = this.lightChildren();
       if (lightEls.length === core.lights.length) {
         lightEls.forEach((el, i) => el.reflect(core.lights[i]));
@@ -273,7 +272,7 @@ export class RayColorViewElement extends HTMLElement {
     const core = this.core!;
     core.onInput = kind => this.emit('input', { kind, colors: this.colors() });
     core.onChange = kind => {
-      this.reflectToChildren(kind);
+      this.reflectToChildren();
       this.emit('change', { kind, colors: this.colors() });
     };
     core.onPalette = () => this.emit('palettechange', { colors: this.colors() });

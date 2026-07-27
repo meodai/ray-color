@@ -57,7 +57,7 @@ interface Sample {
 }
 
 /** What a continuous interaction is editing — the payload of input/change. */
-export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'shape' | 'sample' | 'samples-rotate' | 'camera';
+export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'shape' | 'sample' | 'samples-rotate';
 
 export type GlFactory = (
   width: number,
@@ -1436,23 +1436,21 @@ export class ViewCore {
       }, 'light');
     });
 
+    // NOTE: no camera wheel here — scroll policy belongs to the embedding
+    // page (the playground wires scroll-to-dolly itself). Light markers keep
+    // their wheel because it's part of the light's own control kit.
     this.lightLayer.addEventListener('wheel', e => {
       if (!this._controls) return;
       const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;
       if (!markerEl || markerEl.dataset.light === undefined) return;
+      // handled (or deliberately inert) — never let it fall through to a
+      // host page's own wheel handling on the element
       e.preventDefault();
+      e.stopPropagation();
       const l = this.lights[parseInt(markerEl.dataset.light, 10)];
       if (l.type === 'directional') return; // distance means nothing for a directional light
       l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
       this.onInput?.('light-dist');
-      this.update();
-    }, { passive: false });
-
-    this.canvas.addEventListener('wheel', e => {
-      if (!this._controls) return;
-      e.preventDefault();
-      this.scene.cameraZ = Math.min(-2, Math.max(-10, this.scene.cameraZ - e.deltaY * 0.005));
-      this.onInput?.('camera');
       this.update();
     }, { passive: false });
 
