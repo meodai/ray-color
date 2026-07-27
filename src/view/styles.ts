@@ -212,6 +212,16 @@ export const VIEW_STYLES = `
   opacity: 0;
 }
 
+/* same for the loose points' rotation ring — only the samples themselves stay */
+.samples-rot {
+  transition: opacity 0.15s linear;
+}
+
+.viewport.light-editing .samples-rot {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Invisible wide twin of each orbit ring: the grabbable part */
 .gizmo-orbit-hit {
   fill: none;
