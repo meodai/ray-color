@@ -58,7 +58,7 @@ interface Sample {
 }
 
 /** What a continuous interaction is editing — the payload of input/change. */
-export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'light-color' | 'light-type' | 'shape' | 'sample' | 'samples-rotate';
+export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'light-size' | 'light-angle' | 'light-color' | 'light-type' | 'shape' | 'sample' | 'samples-rotate';
 
 const LIGHT_TYPES: Light['type'][] = ['point', 'area', 'directional', 'spot'];
 
@@ -80,7 +80,18 @@ export interface ViewCoreOptions {
   spacing?: SpacingName;
 }
 
+type ConeMask = { pts: Array<{ x: number; y: number }>; poly: Array<{ x: number; y: number }> };
+
 const clampDot = (d: number) => Math.max(-1, Math.min(1, d));
+
+const pointInPoly = (x: number, y: number, poly: Array<{ x: number; y: number }>) => {
+  let inside = false;
+  for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+    const pa = poly[a], pb = poly[b];
+    if ((pa.y > y) !== (pb.y > y) && x < ((pb.x - pa.x) * (y - pa.y)) / (pb.y - pa.y) + pa.x) inside = !inside;
+  }
+  return inside;
+};
 const wrap180 = (deg: number) => (((deg % 360) + 540) % 360) - 180;
 const angDelta = (a: number, b: number) => ((a - b + 540) % 360) - 180;
 
@@ -94,6 +105,15 @@ const INT_R0 = 16;   // ring radius at intensity 0
 const INT_R1 = 36;   // additional radius as intensity -> inf
 const INT_MAX = 19;  // hard ceiling when dragging the grip outward
 const BEAD_F = 0.5;
+
+// size/angle grips share the drawer sliders' ranges
+const SIZE_MAX = 0.5;
+const ANGLE_MIN = 10, ANGLE_MAX = 60;
+// an area disc at size 0 still draws (and grabs) at this radius, so the
+// emitter can be dragged out from nothing
+const DISC_MIN_R = 8;
+// how far the spot footprint's mask reaches inward from its outline
+const CONE_BAND = 35;
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -559,23 +579,29 @@ export class ViewCore {
         // Edge-clamped lights keep their intensity ring: it rides the clamped
         // marker, with the whole control cluster aimed inward to stay reachable
         const { x: ax, y: ay } = this.clampToCanvasAlongLine(sp.x, sp.y);
-        const clamped = ax !== sp.x || ay !== sp.y;
         const r = intensityRingRadius(this.lights[i].intensity);
-        // the cluster sits opposite the aim line: pointing away from the sphere
-        const c = this._engine.worldToScreen(0, 0, 0);
-        const ga = clamped
-          ? Math.atan2(this.canvas.height / 2 - ay, this.canvas.width / 2 - ax)
-          : Math.atan2(ay - c.y, ax - c.x);
+        const ga = this.clusterBearing(sp.x, sp.y, ax, ay);
         const grip = addGrip('intensity', ax + Math.cos(ga) * r, ay + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
-        // little chevrons flanking the grip along its radial axis: the
-        // drag-in/drag-out affordance
-        grip.style.setProperty('--ga', `${(ga * 180 / Math.PI).toFixed(1)}deg`);
-        for (const side of ['in', 'out'] as const) {
-          const chev = document.createElement('span');
-          chev.className = `light-chev light-chev--${side}`;
-          grip.appendChild(chev);
-        }
+        this.addChevrons(grip, ga);
         this.addLightRingMenu(i, ax, ay, r, ga);
+        // type-specific grips, kept perpendicular to the cluster so they
+        // never crowd the menu
+        const ltype = this.lights[i].type;
+        if (ltype === 'area') {
+          const rDisc = Math.max((this.lights[i].size / (sp.z * this._engine.tanFov())) * (this.canvas.height / 2), DISC_MIN_R);
+          const sa = ga + Math.PI / 2;
+          const sizeGrip = addGrip('size', ax + Math.cos(sa) * rDisc, ay + Math.sin(sa) * rDisc, true, 'Emitter size — drag to soften shadows');
+          this.addChevrons(sizeGrip, sa);
+        } else if (ltype === 'spot') {
+          const gp = this.coneGripScreen(i, ga);
+          if (gp) {
+            // edge-clamped as a remote when the cone edge leaves the canvas
+            const cl = this.clampToCanvasAlongLine(gp.x, gp.y);
+            const angleGrip = addGrip('angle', cl.x, cl.y, true, 'Cone angle — drag to widen the beam');
+            if (cl.x !== gp.x || cl.y !== gp.y) angleGrip.classList.add('shape-handle--behind');
+            this.addChevrons(angleGrip, gp.bearing);
+          }
+        }
         // edge-clamped as a remote when the beam leaves the canvas
         const b = this.beadWorld(i);
         const bp = this._engine.worldToScreen(b.x, b.y, b.z);
@@ -641,13 +667,22 @@ export class ViewCore {
     this.gizmoSvg.innerHTML = '';
     if (this._selectedLight < 0) return;
     const i = this._selectedLight;
-    // rings stay drawable even when the light is off-canvas or behind the camera
-    this.drawOrbit('yaw', i);
-    this.drawOrbit('pitch', i);
+    const type = this.lights[i].type;
     const screenPos = this._engine.worldToScreen(this.lightPositions[i * 3], this.lightPositions[i * 3 + 1], this.lightPositions[i * 3 + 2]);
+    // the spot cone's paths and grip flank resolve first, so the orbit rings
+    // can notch where the cone crosses them
+    let conePhi = 0;
+    let coneMask: ConeMask | null = null;
+    if (type === 'spot' && screenPos.z > 0) {
+      const a = this.clampToCanvasAlongLine(screenPos.x, screenPos.y);
+      conePhi = this.coneGripScreen(i, this.clusterBearing(screenPos.x, screenPos.y, a.x, a.y))?.phi ?? 0;
+      coneMask = this.coneMask(i, conePhi);
+    }
+    // rings stay drawable even when the light is off-canvas or behind the camera
+    this.drawOrbit('yaw', i, coneMask);
+    this.drawOrbit('pitch', i, coneMask);
     if (screenPos.z <= 0) return;
     const { x: cx, y: cy } = this.clampToCanvasAlongLine(screenPos.x, screenPos.y);
-    const type = this.lights[i].type;
     {
       // Aim line from the light to where its ray meets the sphere's surface.
       const lx = this.lightPositions[i * 3], ly = this.lightPositions[i * 3 + 1], lz = this.lightPositions[i * 3 + 2];
@@ -664,14 +699,48 @@ export class ViewCore {
       if (hid) this.appendPaths(hid, [['', 'gizmo-line--hidden']]);
       if (vis) this.appendPaths(vis, [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']]);
     }
-    if (type === 'area' && this.lights[i].size > 0) {
+    if (type === 'area') {
+      // drawn even at size 0 (min radius = the grip's perch), so the emitter
+      // can be dragged out from nothing
       const r = (this.lights[i].size / (screenPos.z * this._engine.tanFov())) * (this.canvas.height / 2);
       const circle = document.createElementNS(NS, 'circle');
       circle.setAttribute('cx', cx.toFixed(1));
       circle.setAttribute('cy', cy.toFixed(1));
-      circle.setAttribute('r', Math.max(2, r).toFixed(1));
+      circle.setAttribute('r', Math.max(DISC_MIN_R, r).toFixed(1));
       circle.setAttribute('class', 'gizmo-area');
       this.gizmoSvg.appendChild(circle);
+    }
+    if (type === 'spot') {
+      const cg = this.coneGeom(i);
+      if (cg) {
+        // a huge cone's strokes stop at the canvas edge instead of spilling
+        // across the page (the overlay svg doesn't clip)
+        const cw = this.canvas.width, ch = this.canvas.height;
+        const offCanvas = (sx: number, sy: number) => sx < -24 || sx > cw + 24 || sy < -24 || sy > ch + 24;
+        const N = 64;
+        const ring = this.pathSplitter(false);
+        for (let k = 0; k <= N; k++) {
+          const w = this.coneEdgePoint(cg, (k / N) * 2 * Math.PI);
+          ring.add(w.x, w.y, w.z, offCanvas);
+        }
+        const { vis, hid } = ring.paths();
+        if (hid) this.appendPaths(hid, [['', 'gizmo-line--hidden']]);
+        if (vis) this.appendPaths(vis, [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']]);
+        // two fan edges from the light, on the grip's flank and its mirror —
+        // they read as the beam's silhouette without boxing the cone in
+        for (const phi of [conePhi, conePhi + Math.PI]) {
+          const t = this.coneEdgePoint(cg, phi);
+          const edge = this.pathSplitter(false);
+          const M = 16;
+          for (let k = 0; k <= M; k++) {
+            const f = k / M;
+            edge.add(cg.lx + (t.x - cg.lx) * f, cg.ly + (t.y - cg.ly) * f, cg.lz + (t.z - cg.lz) * f, offCanvas);
+          }
+          const e = edge.paths();
+          if (e.hid) this.appendPaths(e.hid, [['', 'gizmo-line--hidden']]);
+          if (e.vis) this.appendPaths(e.vis, [['3', 'gizmo-line-casing'], ['1', 'gizmo-line']]);
+        }
+      }
     }
     {
       // intensity ring — drawn around the clamped marker when the light is
@@ -719,8 +788,10 @@ export class ViewCore {
             pt = true;
           } else pt = false;
         }
-        if (engine.isPointOccluded(wx, wy, wz)) { hid += (ph ? 'L' : 'M') + seg; ph = true; pv = false; }
-        else if (veto?.(p.x, p.y)) { pv = false; ph = false; }
+        // veto beats occlusion: a masked region swallows the faint
+        // through-sphere dashes too, not just the visible stroke
+        if (veto?.(p.x, p.y)) { pv = false; ph = false; }
+        else if (engine.isPointOccluded(wx, wy, wz)) { hid += (ph ? 'L' : 'M') + seg; ph = true; pv = false; }
         else { vis += (pv ? 'L' : 'M') + seg; pv = true; ph = false; }
       },
       paths: () => ({ vis, hid, hit }),
@@ -737,7 +808,7 @@ export class ViewCore {
     }
   }
 
-  private drawOrbit(kind: 'yaw' | 'pitch', i: number) {
+  private drawOrbit(kind: 'yaw' | 'pitch', i: number, coneMask: ConeMask | null = null) {
     const d = this.orbitRadius(kind);
     const yawRad = this.lights[i].yaw * Math.PI / 180;
     // the dial's front half notches the meridian where they cross on screen
@@ -759,11 +830,25 @@ export class ViewCore {
       }
       return false;
     };
+    const nearCone = (x: number, y: number) => {
+      if (!coneMask) return false;
+      for (const m of coneMask.pts) {
+        if ((m.x - x) * (m.x - x) + (m.y - y) * (m.y - y) < 36) return true;
+      }
+      // inside the footprint, a fixed-width band inward from the outline
+      // masks — a huge footprint doesn't swallow the rings wholesale, they
+      // resurface past the band
+      if (!pointInPoly(x, y, coneMask.poly)) return false;
+      for (const m of coneMask.poly) {
+        if ((m.x - x) * (m.x - x) + (m.y - y) * (m.y - y) < CONE_BAND * CONE_BAND) return true;
+      }
+      return false;
+    };
     const N = 192; // fine enough that the meridian notch can't slip between samples
     const sp = this.pathSplitter(true);
     for (let k = 0; k <= N; k++) {
       const w = this.ringWorld(kind, (k / N) * 2 * Math.PI, yawRad, d);
-      sp.add(w.x, w.y, w.z, w.z < 0 ? nearOtherRing : undefined);
+      sp.add(w.x, w.y, w.z, (sx, sy) => (w.z < 0 && nearOtherRing(sx, sy)) || nearCone(sx, sy));
     }
     const { vis, hid, hit: hitD } = sp.paths();
     if (hid) this.appendPaths(hid, [['', 'gizmo-line--hidden']]);
@@ -779,6 +864,7 @@ export class ViewCore {
       const p1 = this._engine.worldToScreen(tip.x, tip.y, tip.z);
       if (p0.z <= 0.5 || p1.z <= 0.5) continue;
       if (base.z < 0 && (nearOtherRing(p0.x, p0.y) || nearOtherRing(p1.x, p1.y))) continue;
+      if (nearCone(p0.x, p0.y) || nearCone(p1.x, p1.y)) continue;
       tickD += `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} L${p1.x.toFixed(1)} ${p1.y.toFixed(1)} `;
     }
     if (tickD) {
@@ -891,11 +977,141 @@ export class ViewCore {
     return { x: lx * s, y: ly * s, z: lz * s };
   }
 
-  private beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist') {
+  // The control cluster points away from the sphere — or inward when the
+  // marker is edge-clamped, so it stays reachable
+  private clusterBearing(sx: number, sy: number, ax: number, ay: number) {
+    if (ax !== sx || ay !== sy) {
+      return Math.atan2(this.canvas.height / 2 - ay, this.canvas.width / 2 - ax);
+    }
+    const c = this._engine.worldToScreen(0, 0, 0);
+    return Math.atan2(ay - c.y, ax - c.x);
+  }
+
+  // little chevrons flanking a grip along its radial axis: the
+  // drag-in/drag-out affordance
+  private addChevrons(grip: HTMLElement, ga: number) {
+    grip.style.setProperty('--ga', `${(ga * 180 / Math.PI).toFixed(1)}deg`);
+    for (const side of ['in', 'out'] as const) {
+      const chev = document.createElement('span');
+      chev.className = `light-chev light-chev--${side}`;
+      grip.appendChild(chev);
+    }
+  }
+
+  // Spot cone edge circle: centered on the aim point at the sphere's surface,
+  // radius d·tan(angle) where d is the light-to-surface run along the beam
+  private coneGeom(i: number) {
+    const lx = this.lightPositions[i * 3], ly = this.lightPositions[i * 3 + 1], lz = this.lightPositions[i * 3 + 2];
+    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+    const d = llen - this.scene.sphereRadius;
+    if (d < 0.05) return null;
+    const s = this.scene.sphereRadius / llen;
+    const ex = lx * s, ey = ly * s, ez = lz * s;
+    const ep = this._engine.worldToScreen(ex, ey, ez);
+    if (ep.z <= 0.5) return null;
+    const u = new Float64Array(3), v = new Float64Array(3);
+    circleBasis([lx / llen, ly / llen, lz / llen], u, v);
+    return {
+      lx, ly, lz, d, ex, ey, ez, ep, u, v,
+      // px per world unit in the aim point's depth plane
+      k: (this.canvas.height / 2) / (ep.z * this._engine.tanFov()),
+      rWorld: d * Math.tan(this.lights[i].angle * Math.PI / 180),
+    };
+  }
+
+  private coneEdgePoint(cg: NonNullable<ReturnType<ViewCore['coneGeom']>>, phi: number) {
+    const cp = Math.cos(phi), sn = Math.sin(phi);
+    return {
+      x: cg.ex + (cg.u[0] * cp + cg.v[0] * sn) * cg.rWorld,
+      y: cg.ey + (cg.u[1] * cp + cg.v[1] * sn) * cg.rWorld,
+      z: cg.ez + (cg.u[2] * cp + cg.v[2] * sn) * cg.rWorld,
+    };
+  }
+
+  // Where the angle grip rides: the edge-circle sample whose screen bearing
+  // around the aim point sits perpendicular to the control cluster
+  private coneGripScreen(i: number, ga: number) {
+    const cg = this.coneGeom(i);
+    if (!cg) return null;
+    const target = ga + Math.PI / 2;
+    let best: { x: number; y: number; phi: number; bearing: number } | null = null;
+    let bestErr = Infinity;
+    const N = 48;
+    for (let k = 0; k < N; k++) {
+      const phi = (k / N) * 2 * Math.PI;
+      const w = this.coneEdgePoint(cg, phi);
+      const p = this._engine.worldToScreen(w.x, w.y, w.z);
+      if (p.z <= 0.5) continue;
+      const bearing = Math.atan2(p.y - cg.ep.y, p.x - cg.ep.x);
+      const err = Math.abs(Math.atan2(Math.sin(bearing - target), Math.cos(bearing - target)));
+      if (err < bestErr) { bestErr = err; best = { x: p.x, y: p.y, phi, bearing }; }
+    }
+    return best;
+  }
+
+  // The cone's screen-space mask: points along its drawn paths (fan lines,
+  // edge circle), plus the projected footprint polygon — the orbit rings
+  // notch near the strokes and vanish inside the fill
+  private coneMask(i: number, phi0: number) {
+    const cg = this.coneGeom(i);
+    if (!cg) return null;
+    const pts: Array<{ x: number; y: number }> = [];
+    const poly: Array<{ x: number; y: number }> = [];
+    const push = (wx: number, wy: number, wz: number, ring: boolean) => {
+      const p = this._engine.worldToScreen(wx, wy, wz);
+      if (p.z <= 0.5) return;
+      if (ring) poly.push({ x: p.x, y: p.y });
+      if (!this._engine.isPointOccluded(wx, wy, wz)) pts.push({ x: p.x, y: p.y });
+    };
+    const N = 96;
+    for (let k = 0; k < N; k++) {
+      const w = this.coneEdgePoint(cg, (k / N) * 2 * Math.PI);
+      push(w.x, w.y, w.z, true);
+    }
+    const M = 48; // dense enough that a ring can't slip through between samples
+    for (const phi of [phi0, phi0 + Math.PI]) {
+      const t = this.coneEdgePoint(cg, phi);
+      for (let k = 0; k <= M; k++) {
+        const f = k / M;
+        push(cg.lx + (t.x - cg.lx) * f, cg.ly + (t.y - cg.ly) * f, cg.lz + (t.z - cg.lz) * f, false);
+      }
+    }
+    return { pts, poly };
+  }
+
+  private beginGripDrag(e: PointerEvent, kind: 'intensity' | 'dist' | 'size' | 'angle') {
     if (this._selectedLight < 0) return;
     e.preventDefault();
     e.stopPropagation();
     const li = this._selectedLight;
+    const EVENT = { intensity: 'light-intensity', dist: 'light-dist', size: 'light-size', angle: 'light-angle' } as const;
+
+    // size and angle share one shape: radial px distance from an anchor,
+    // grab-offset kept so the value never jumps under the pointer
+    let radial: { ax: number; ay: number; offset: number; apply: (rPx: number, l: Light) => void } | null = null;
+    if (kind === 'size') {
+      const sp = this._engine.worldToScreen(this.lightPositions[li * 3], this.lightPositions[li * 3 + 1], this.lightPositions[li * 3 + 2]);
+      const a = this.clampToCanvasAlongLine(sp.x, sp.y);
+      const kPx = (this.canvas.height / 2) / (sp.z * this._engine.tanFov());
+      const p0 = this.eventToCanvasPixels(e.clientX, e.clientY, false);
+      radial = {
+        ax: a.x, ay: a.y,
+        offset: this.lights[li].size * kPx - Math.hypot(p0.x - a.x, p0.y - a.y),
+        apply: (rPx, l) => { l.size = Math.round(Math.max(0, Math.min(SIZE_MAX, rPx / kPx)) * 100) / 100; },
+      };
+    } else if (kind === 'angle') {
+      const cg = this.coneGeom(li);
+      if (!cg) return;
+      const p0 = this.eventToCanvasPixels(e.clientX, e.clientY, false);
+      radial = {
+        ax: cg.ep.x, ay: cg.ep.y,
+        offset: cg.rWorld * cg.k - Math.hypot(p0.x - cg.ep.x, p0.y - cg.ep.y),
+        apply: (rPx, l) => {
+          const deg = Math.atan((rPx / cg.k) / cg.d) * 180 / Math.PI;
+          l.angle = Math.round(Math.max(ANGLE_MIN, Math.min(ANGLE_MAX, deg)));
+        },
+      };
+    }
 
     let distDrag: { uOf: (x: number, y: number) => number; solve: (u: number) => number; uOffset: number } | null = null;
     if (kind === 'dist') {
@@ -949,14 +1165,16 @@ export class ViewCore {
         const r = Math.hypot(p.x - a.x, p.y - a.y);
         const x = Math.max(0, Math.min(INT_MAX / (INT_MAX + 1), (r - INT_R0) / INT_R1));
         l.intensity = Math.round((x / (1 - x)) * 100) / 100;
+      } else if (radial) {
+        radial.apply(Math.max(0, Math.hypot(p.x - radial.ax, p.y - radial.ay) + radial.offset), l);
       } else if (distDrag) {
         const u = Math.max(0, Math.min(1, distDrag.uOf(p.x, p.y) + distDrag.uOffset));
         l.dist = Math.round(distDrag.solve(u) * 100) / 100;
       }
-      this.onInput?.(kind === 'intensity' ? 'light-intensity' : 'light-dist');
+      this.onInput?.(EVENT[kind]);
       this.update();
     };
-    this.trackDrag(move, kind === 'intensity' ? 'light-intensity' : 'light-dist');
+    this.trackDrag(move, EVENT[kind]);
   }
 
   // ---------------------------------------------------------------- samples (points mode)
@@ -1543,7 +1761,7 @@ export class ViewCore {
       if (!this._controls) return;
       const gripEl = (e.target as HTMLElement).closest('[data-grip]') as HTMLElement | null;
       if (gripEl) {
-        this.beginGripDrag(e, gripEl.dataset.grip as 'intensity' | 'dist');
+        this.beginGripDrag(e, gripEl.dataset.grip as 'intensity' | 'dist' | 'size' | 'angle');
         return;
       }
       const markerEl = (e.target as HTMLElement).closest('.light-marker') as HTMLElement | null;

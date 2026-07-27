@@ -904,6 +904,12 @@ view.addEventListener('input', e => {
   } else if (kind === 'light-dist' && selectedLight >= 0) {
     inspDist.value = lights[selectedLight].dist.toString();
     syncOutputs();
+  } else if (kind === 'light-size' && selectedLight >= 0) {
+    inspSize.value = lights[selectedLight].size.toString();
+    syncOutputs();
+  } else if (kind === 'light-angle' && selectedLight >= 0) {
+    inspAngle.value = lights[selectedLight].angle.toString();
+    syncOutputs();
   } else if (kind === 'light-color' && selectedLight >= 0) {
     inspColor.value = lights[selectedLight].hex;
   }
