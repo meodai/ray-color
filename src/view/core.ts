@@ -1443,12 +1443,18 @@ export class ViewCore {
     // selected the wheel falls through untouched.
     this.viewport.addEventListener('wheel', e => {
       if (!this._controls || this._selectedLight < 0) return;
-      const l = this.lights[this._selectedLight];
-      if (l.type === 'directional') return; // distance means nothing for a directional light
       e.preventDefault();
       e.stopPropagation();
-      l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
-      this.onInput?.('light-dist');
+      const l = this.lights[this._selectedLight];
+      if (l.type === 'directional') {
+        // distance means nothing for a directional light (parallel rays) —
+        // scroll drives its intensity instead, so every type has a wheel
+        l.intensity = Math.round(Math.max(0, Math.min(INT_MAX, l.intensity + (e.deltaY > 0 ? -0.05 : 0.05))) * 100) / 100;
+        this.onInput?.('light-intensity');
+      } else {
+        l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
+        this.onInput?.('light-dist');
+      }
       this.update();
     }, { passive: false });
 

@@ -159,8 +159,9 @@ the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
 scroll-to-dolly is the embedding page's decision — a `wheel` listener on the
 element that nudges `cameraZ` is all it takes. The one wheel the component
 claims: while a light is selected, scrolling over the viewport slides that
-light's distance (and stops the event from bubbling out); with nothing
-selected the wheel passes through untouched.
+light's distance — intensity for directional lights, which have none — and
+stops the event from bubbling out; with nothing selected the wheel passes
+through untouched.
 
 The overlay styling is themable through CSS custom properties on the element
 (or any ancestor):
