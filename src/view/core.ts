@@ -29,7 +29,7 @@ import { LIGHT_TYPE_ICONS } from './icons';
 
 export type SampleMode = 'points' | 'line' | 'circle';
 export type SpacingName = keyof typeof distributions;
-export type HandleRole = 'a' | 'b' | 'r' | 'rot';
+export type HandleRole = 'a' | 'b' | 'r' | 'rot' | 'crot';
 
 export interface SurfaceShape {
   kind: 'line' | 'circle';
@@ -96,6 +96,11 @@ const INT_MAX = 19;  // hard ceiling when dragging the grip outward
 const BEAD_F = 0.5;
 
 const NS = 'http://www.w3.org/2000/svg';
+
+// circle rotation satellite: angular offset from the center, and the radius
+// below which it would collide with the ring and steps aside
+const CROT_ARC = 0.16;
+const CROT_MIN_RHO = 0.24;
 
 export class ViewCore {
   readonly scene: Scene;
@@ -1231,6 +1236,18 @@ export class ViewCore {
       grip.style.top = `${pg.y}%`;
       grip.classList.add('shape-handle--grip');
       grip.classList.toggle('shape-handle--behind', this.dirIsBehind(pt));
+      // Rotation satellite beside the center, like the line's — opposite the
+      // radius grip's bearing so they never crowd each other. It steps aside
+      // (disappears) once the ring closes in on the center.
+      if (shape.rho > CROT_MIN_RHO) {
+        const rot = this.makeShapeHandle('crot', 'Drag around the center to rotate the palette');
+        circleDir(shape.a, CROT_ARC, shape.rotate * Math.PI / 180 + Math.PI, pt);
+        const pr = this.projectDirPct(pt);
+        rot.style.left = `${pr.x}%`;
+        rot.style.top = `${pr.y}%`;
+        rot.classList.add('shape-handle--grip', 'shape-handle--rot');
+        rot.classList.toggle('shape-handle--behind', this.dirIsBehind(pt));
+      }
     }
   }
 
@@ -1292,6 +1309,24 @@ export class ViewCore {
       // dead-center the bearing is undefined
       return Math.hypot(tu, tv) > 1e-6 ? Math.atan2(tv, tu) : null;
     };
+    if (role === 'crot') {
+      // circle rotation satellite: the pointer's bearing around the center
+      // sets the palette rotation — the satellite rides at bearing + 180°,
+      // so absolute tracking grabs without a jump
+      const cu = new Float64Array(3), cv = new Float64Array(3);
+      circleBasis(shape.a, cu, cv);
+      const move = (ev: PointerEvent) => {
+        const q = this.eventToCanvasPixels(ev.clientX, ev.clientY);
+        const h = this._engine.castRay(q.x, q.y);
+        if (!h || !this._shape) return;
+        const bearing = bearingOf(cu, cv, h.nx, h.ny, h.nz);
+        if (bearing === null) return;
+        shape.rotate = bearing * 180 / Math.PI - 180;
+        refresh();
+      };
+      this.trackDrag(move, 'shape');
+      return;
+    }
     if (role === 'rot') {
       // spin grip: swing the line about its midpoint — endpoints follow the
       // pointer's bearing around the center, incrementally so grabbing never jumps
@@ -1349,6 +1384,10 @@ export class ViewCore {
     } else {
       const pg = this.projectDirPct(circleDir(shape.a, shape.rho, shape.rotate * Math.PI / 180));
       pts.push({ role: 'r', sx: pg.sx, sy: pg.sy });
+      if (shape.rho > CROT_MIN_RHO) {
+        const pr = this.projectDirPct(circleDir(shape.a, CROT_ARC, shape.rotate * Math.PI / 180 + Math.PI));
+        pts.push({ role: 'crot', sx: pr.sx, sy: pr.sy });
+      }
     }
     return pts;
   }
