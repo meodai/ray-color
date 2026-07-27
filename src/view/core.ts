@@ -559,15 +559,25 @@ export class ViewCore {
           return g;
         };
         // Edge-clamped lights keep their intensity ring: it rides the clamped
-        // marker, with the grip aimed inward so it stays reachable
+        // marker, with the whole control cluster aimed inward to stay reachable
         const { x: ax, y: ay } = this.clampToCanvasAlongLine(sp.x, sp.y);
         const clamped = ax !== sp.x || ay !== sp.y;
         const r = intensityRingRadius(this.lights[i].intensity);
+        // the cluster sits opposite the aim line: pointing away from the sphere
+        const c = this._engine.worldToScreen(0, 0, 0);
         const ga = clamped
           ? Math.atan2(this.canvas.height / 2 - ay, this.canvas.width / 2 - ax)
-          : -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
-        addGrip('intensity', ax + Math.cos(ga) * r, ay + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
-        this.addLightRingMenu(i, ax, ay, r, ga, clamped);
+          : Math.atan2(ay - c.y, ax - c.x);
+        const grip = addGrip('intensity', ax + Math.cos(ga) * r, ay + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
+        // little chevrons flanking the grip along its radial axis: the
+        // drag-in/drag-out affordance
+        grip.style.setProperty('--ga', `${(ga * 180 / Math.PI).toFixed(1)}deg`);
+        for (const side of ['in', 'out'] as const) {
+          const chev = document.createElement('span');
+          chev.className = `light-chev light-chev--${side}`;
+          grip.appendChild(chev);
+        }
+        this.addLightRingMenu(i, ax, ay, r, ga);
         // edge-clamped as a remote when the beam leaves the canvas
         const b = this.beadWorld(i);
         const bp = this._engine.worldToScreen(b.x, b.y, b.z);
@@ -581,16 +591,15 @@ export class ViewCore {
     this.updateGizmo();
   }
 
-  // Circular menu riding the intensity ring, opposite the grip: a round color
-  // swatch and a light-type button (its native select opens on click)
-  private addLightRingMenu(i: number, ax: number, ay: number, r: number, ga: number, clamped: boolean) {
+  // Circular menu riding the intensity ring: color swatch and light-type
+  // button flanking the intensity grip, which always sits between them
+  private addLightRingMenu(i: number, ax: number, ay: number, r: number, ga: number) {
     const light = this.lights[i];
     // small rings would stack the buttons onto the marker — keep a floor
     const cr = Math.max(r, 30);
-    const spread = 27 * Math.PI / 180;
-    // clamped: the opposite side points off-canvas, so flank the inward grip
-    const a1 = clamped ? ga - 1.9 * spread : ga + Math.PI - spread;
-    const a2 = clamped ? ga + 1.9 * spread : ga + Math.PI + spread;
+    const spread = 50 * Math.PI / 180;
+    const a1 = ga - spread;
+    const a2 = ga + spread;
     const addCtrl = (cls: string, a: number, title: string) => {
       const c = document.createElement('div');
       c.className = 'light-ctrl ' + cls;

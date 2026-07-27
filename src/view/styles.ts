@@ -314,6 +314,28 @@ export const VIEW_STYLES = `
   display: none;
 }
 
+/* Little chevrons flanking the intensity grip along its radial axis —
+   they read as "drag in / out" */
+.light-chev {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: .18rem;
+  height: .18rem;
+  border-top: 1px solid var(--rcv-white);
+  border-right: 1px solid var(--rcv-white);
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .55));
+}
+
+.light-chev--out {
+  transform: translate(-50%, -50%) rotate(var(--ga, 0deg)) translateX(.55rem) rotate(45deg);
+}
+
+.light-chev--in {
+  transform: translate(-50%, -50%) rotate(var(--ga, 0deg)) translateX(-.55rem) rotate(-135deg);
+}
+
 /* Circular light menu: round cells riding the intensity ring opposite the
    grip — same double-outline language as the markers */
 .light-ctrl {
