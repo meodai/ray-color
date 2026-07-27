@@ -106,7 +106,6 @@ export class ViewCore {
   readonly scene: Scene;
   readonly lights: Light[];
 
-  // DOM — all inside the given root
   readonly viewport: HTMLDivElement;
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -134,7 +133,6 @@ export class ViewCore {
   private _selectedLight = -1;
   private samplesRotSpin = 0; // cosmetic: the knob keeps the accumulated turn
 
-  // render pipeline
   private renderInProgress = false;
   private pendingRender = false;
   private settleTimer: number | undefined;
@@ -256,7 +254,7 @@ export class ViewCore {
     this.resizeObserver.observe(this.viewport);
 
     this.setMode(this._mode); // applies mode defaults
-    this.update();            // first commit + markers + frame
+    this.update();
   }
 
   // ---------------------------------------------------------------- public surface

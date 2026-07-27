@@ -338,8 +338,8 @@ export const VIEW_STYLES = `
   transform: translate(-50%, -50%) rotate(var(--ga, 0deg)) translateX(-.55rem) rotate(-135deg);
 }
 
-/* Circular light menu: round cells riding the intensity ring opposite the
-   grip — same double-outline language as the markers */
+/* Circular light menu: round cells flanking the intensity grip on its ring —
+   same double-outline language as the markers */
 .light-ctrl {
   position: absolute;
   width: 1.1rem;

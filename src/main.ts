@@ -929,8 +929,8 @@ view.addEventListener('sampleselect', () => {
 view.addEventListener('settled', () => scheduleFavicon());
 
 // No scroll-to-dolly: the camera distance lives on the drawer's slider.
-// (Scroll on a light marker still adjusts its distance — that wheel is part
-// of the light's control kit inside the component.)
+// (While a light is selected the component claims the wheel for that light's
+// distance/intensity — part of its control kit, not the page's scroll.)
 
 view.addEventListener('change', e => {
   const kind = (e as CustomEvent).detail.kind as InputKind;
