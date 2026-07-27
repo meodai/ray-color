@@ -119,7 +119,7 @@ body {
 .menu__brand {
   display: flex;
   align-items: center;
-  padding: 0 0.9rem;
+  padding: 0 0 0 0.9rem;
   font-size: 1rem;
   white-space: nowrap;
 }
