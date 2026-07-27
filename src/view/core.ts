@@ -25,6 +25,7 @@ import {
   type Scene,
 } from '../engine';
 import type { GlPreview } from '../gl-preview';
+import { LIGHT_TYPE_ICONS } from './icons';
 
 export type SampleMode = 'points' | 'line' | 'circle';
 export type SpacingName = keyof typeof distributions;
@@ -57,7 +58,9 @@ interface Sample {
 }
 
 /** What a continuous interaction is editing — the payload of input/change. */
-export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'shape' | 'sample' | 'samples-rotate';
+export type InputKind = 'light' | 'light-intensity' | 'light-dist' | 'light-color' | 'light-type' | 'shape' | 'sample' | 'samples-rotate';
+
+const LIGHT_TYPES: Light['type'][] = ['point', 'area', 'directional', 'spot'];
 
 export type GlFactory = (
   width: number,
@@ -134,6 +137,8 @@ export class ViewCore {
 
   private resizeObserver: ResizeObserver;
   private disposed = false;
+  private readonly colorInput: HTMLInputElement;
+  private colorLight = -1; // which light the open color picker edits
 
   // outward hooks — the element (or any host) assigns these
   onInput: ((kind: InputKind) => void) | null = null;
@@ -199,6 +204,22 @@ export class ViewCore {
         });
       }
     }
+
+    // One persistent color input outside the marker layer (which is wiped on
+    // every update): the native picker stays anchored and alive while its
+    // input events stream through re-renders
+    this.colorInput = document.createElement('input');
+    this.colorInput.type = 'color';
+    this.colorInput.className = 'light-color-input';
+    this.colorInput.tabIndex = -1;
+    this.viewport.appendChild(this.colorInput);
+    this.colorInput.addEventListener('input', () => {
+      if (this.colorLight < 0) return;
+      this.lights[this.colorLight].hex = this.colorInput.value;
+      this.onInput?.('light-color');
+      this.update();
+    });
+    this.colorInput.addEventListener('change', () => this.onChange?.('light-color'));
 
     this.samplesRotWidget = document.createElement('div');
     this.samplesRotWidget.className = 'marker samples-rot';
@@ -538,6 +559,7 @@ export class ViewCore {
           ? Math.atan2(this.canvas.height / 2 - ay, this.canvas.width / 2 - ax)
           : -Math.PI / 4; // upper-right, clear of the aim line toward the sphere
         addGrip('intensity', ax + Math.cos(ga) * r, ay + Math.sin(ga) * r, true, 'Intensity — drag to resize the ring');
+        this.addLightRingMenu(i, ax, ay, r, ga, clamped);
         // edge-clamped as a remote when the beam leaves the canvas
         const b = this.beadWorld(i);
         const bp = this._engine.worldToScreen(b.x, b.y, b.z);
@@ -549,6 +571,54 @@ export class ViewCore {
       }
     }
     this.updateGizmo();
+  }
+
+  // Circular menu riding the intensity ring, opposite the grip: a round color
+  // swatch and a light-type button (its native select opens on click)
+  private addLightRingMenu(i: number, ax: number, ay: number, r: number, ga: number, clamped: boolean) {
+    const light = this.lights[i];
+    // small rings would stack the buttons onto the marker — keep a floor
+    const cr = Math.max(r, 30);
+    const spread = 27 * Math.PI / 180;
+    // clamped: the opposite side points off-canvas, so flank the inward grip
+    const a1 = clamped ? ga - 1.9 * spread : ga + Math.PI - spread;
+    const a2 = clamped ? ga + 1.9 * spread : ga + Math.PI + spread;
+    const addCtrl = (cls: string, a: number, title: string) => {
+      const c = document.createElement('div');
+      c.className = 'light-ctrl ' + cls;
+      c.title = title;
+      c.style.left = `${((ax + Math.cos(a) * cr) / this.canvas.width) * 100}%`;
+      c.style.top = `${((ay + Math.sin(a) * cr) / this.canvas.height) * 100}%`;
+      c.addEventListener('pointerdown', e => e.stopPropagation());
+      this.lightLayer.appendChild(c);
+      return c;
+    };
+
+    const swatch = addCtrl('light-ctrl--color', a1, 'Light color — click to pick');
+    swatch.style.backgroundColor = light.hex;
+    swatch.addEventListener('click', e => {
+      e.stopPropagation();
+      this.colorLight = i;
+      this.colorInput.value = light.hex;
+      // anchor the native picker at the swatch
+      this.colorInput.style.left = swatch.style.left;
+      this.colorInput.style.top = swatch.style.top;
+      const input = this.colorInput as HTMLInputElement & { showPicker?: () => void };
+      try { input.showPicker ? input.showPicker() : input.click(); } catch { input.click(); }
+    });
+
+    const type = addCtrl('light-ctrl--type', a2, 'Light type');
+    type.innerHTML = LIGHT_TYPE_ICONS[light.type];
+    const sel = document.createElement('select');
+    sel.className = 'light-ctrl__select';
+    sel.title = 'Light type';
+    for (const t of LIGHT_TYPES) sel.add(new Option(t, t, false, t === light.type));
+    sel.addEventListener('change', () => {
+      light.type = sel.value as Light['type'];
+      this.update();
+      this.onChange?.('light-type');
+    });
+    type.appendChild(sel);
   }
 
   private updateGizmo() {

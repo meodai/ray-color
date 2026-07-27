@@ -306,6 +306,70 @@ export const VIEW_STYLES = `
   display: none;
 }
 
+/* Circular light menu: round cells riding the intensity ring opposite the
+   grip — same double-outline language as the markers */
+.light-ctrl {
+  position: absolute;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--rcv-bg);
+  color: var(--rcv-text);
+  box-shadow:
+    0 0 0 1.5px var(--rcv-white),
+    0 0 0 2.5px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s cubic-bezier(0.3, 0.7, 0, 1);
+}
+
+.light-ctrl:hover {
+  transform: translate(-50%, -50%) scale(1.18);
+}
+
+/* generous invisible hit area, like the shape handles */
+.light-ctrl::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+}
+
+.light-ctrl svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  display: block;
+  pointer-events: none;
+}
+
+/* the native dropdown opens from an invisible select covering the cell */
+.light-ctrl__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  appearance: none;
+  border: 0;
+  padding: 0;
+}
+
+/* invisible anchor for the native color picker */
+.light-color-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
 /* Hollow ring: the light sits behind the sphere */
 .light-marker--occluded {
   background: transparent;

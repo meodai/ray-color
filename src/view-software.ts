@@ -4,6 +4,7 @@ import { defineRayColorView } from './view/element';
 
 export { RayColorViewElement, RayColorLightElement, RayColorShapeElement, defineRayColorView } from './view/element';
 export { ViewCore } from './view/core';
+export { LIGHT_TYPE_ICONS } from './view/icons';
 export type { ViewCoreOptions, SampleMode, SpacingName, SurfaceShape, ShapeInit, InputKind, GlFactory } from './view/core';
 
 defineRayColorView(null);

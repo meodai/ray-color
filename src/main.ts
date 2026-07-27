@@ -12,6 +12,7 @@ import {
   type Light,
 } from './engine';
 import './view'; // registers <ray-color-view> before the element below upgrades
+import { LIGHT_TYPE_ICONS } from './view';
 import type { RayColorViewElement, SampleMode, SpacingName, InputKind } from './view';
 import { PRESETS } from './presets';
 
@@ -67,15 +68,6 @@ function scheduleFavicon() {
 }
 
 // ---------------------------------------------------------------- light rail
-
-// Light-type icons (same drawings as the type select), injected into the
-// control rail; stroke/fill follow currentColor so they can be tinted
-const LIGHT_TYPE_ICONS: Record<string, string> = {
-  point: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
-  area: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 4.5l2.3-1.4M11.3 8h3.2M10.5 11.5l2.3 1.4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
-  directional: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M2 8h7M2 12h7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.5 2.4L14 4l-4.5 1.6zM9.5 6.4L14 8l-4.5 1.6zM9.5 10.4L14 12l-4.5 1.6z" fill="currentColor"/></svg>',
-  spot: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8L12 3.8M2.5 8L12 12.2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><ellipse cx="12.2" cy="8" rx="1.7" ry="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
-};
 
 function contrastColor(hexColor: string) {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hexColor);
@@ -912,6 +904,8 @@ view.addEventListener('input', e => {
   } else if (kind === 'light-dist' && selectedLight >= 0) {
     inspDist.value = lights[selectedLight].dist.toString();
     syncOutputs();
+  } else if (kind === 'light-color' && selectedLight >= 0) {
+    inspColor.value = lights[selectedLight].hex;
   }
 });
 
@@ -941,6 +935,8 @@ view.addEventListener('settled', () => scheduleFavicon());
 view.addEventListener('change', e => {
   const kind = (e as CustomEvent).detail.kind as InputKind;
   if (kind === 'sample') sound.playTack();
+  // the ring menu's type select changes row visibility in the inspector
+  if (kind === 'light-type' && selectedLight >= 0) syncInspectorUI();
 });
 
 // ---------------------------------------------------------------- keyboard
