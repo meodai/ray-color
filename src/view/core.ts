@@ -359,6 +359,9 @@ export class ViewCore {
         octx.globalAlpha = this.dirIsBehind(d) ? 0.3 : 1; // faded through the sphere, like on screen
         octx.beginPath();
         octx.arc(p.sx, p.sy, 4, 0, Math.PI * 2);
+        octx.lineWidth = 3; // dark separator ring outside the white one, as on screen
+        octx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        octx.stroke();
         octx.fillStyle = col ? `rgb(${toSRGB8(col[0])}, ${toSRGB8(col[1])}, ${toSRGB8(col[2])})` : '#fff';
         octx.fill();
         octx.lineWidth = 1.5;
@@ -1160,6 +1163,20 @@ export class ViewCore {
       if (!this.dirIsBehind(pt)) { frontD += (pf ? 'L' : 'M') + seg; pf = true; pb = false; }
       else { backD += (pb ? 'L' : 'M') + seg; pb = true; pf = false; }
     }
+    const dirs = this.shapeSampleDirs();
+    const projected = dirs.map(d => ({ p: this.projectDirPct(d), behind: this.dirIsBehind(d) ? ' shape-dot--back' : '' }));
+
+    // dark casing rings go UNDER the path strokes: the line runs over them,
+    // and the colored dots (with their white rings) sit on top of the line
+    projected.forEach(({ p, behind }) => {
+      const casing = document.createElementNS(NS, 'circle');
+      casing.setAttribute('cx', p.sx.toFixed(1));
+      casing.setAttribute('cy', p.sy.toFixed(1));
+      casing.setAttribute('r', '3');
+      casing.setAttribute('class', `shape-dot-casing${behind}`);
+      this.shapeSvg.appendChild(casing);
+    });
+
     if (backD) {
       const back = document.createElementNS(NS, 'path');
       back.setAttribute('d', backD);
@@ -1175,16 +1192,14 @@ export class ViewCore {
       }
     }
 
-    const dirs = this.shapeSampleDirs();
-    dirs.forEach((d, k) => {
-      const p = this.projectDirPct(d);
+    projected.forEach(({ p, behind }, k) => {
       const dot = document.createElementNS(NS, 'circle');
       dot.setAttribute('cx', p.sx.toFixed(1));
       dot.setAttribute('cy', p.sy.toFixed(1));
       dot.setAttribute('r', '3');
       const col = this.shapeColors[k];
       if (col) dot.setAttribute('fill', `rgb(${toSRGB8(col[0])}, ${toSRGB8(col[1])}, ${toSRGB8(col[2])})`);
-      dot.setAttribute('class', `shape-dot${this.dirIsBehind(d) ? ' shape-dot--back' : ''}`);
+      dot.setAttribute('class', `shape-dot${behind}`);
       this.shapeSvg.appendChild(dot);
     });
 

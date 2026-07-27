@@ -113,6 +113,14 @@ export const VIEW_STYLES = `
   paint-order: stroke;
 }
 
+/* the dark separator ring outside each dot's white ring (same role as the
+   path casing) — wide enough to peek ~1.5px past the white stroke */
+.shape-dot-casing {
+  fill: none;
+  stroke: var(--rcv-casing);
+  stroke-width: calc(var(--rcv-stroke-width) * 0.67 + 1.5px);
+}
+
 .shape-dot--back {
   opacity: .3;
 }
