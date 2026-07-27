@@ -118,7 +118,7 @@ export class RayColorViewElement extends HTMLElement {
     shadow.appendChild(style);
 
     const scene: Scene = {
-      cameraZ: numAttr(this, 'camera-z', -9),
+      cameraZ: numAttr(this, 'camera-z', -9.3),
       fov: numAttr(this, 'fov', 30),
       sphereRadius: numAttr(this, 'sphere-radius', 1.2),
       sphereHex: this.getAttribute('sphere-hex') ?? '#ffffff',

@@ -934,19 +934,9 @@ view.addEventListener('sampleselect', () => {
 
 view.addEventListener('settled', () => scheduleFavicon());
 
-// Scroll-to-dolly is the page's call, not the component's — the demo wants
-// it, an embedder deciding their own wheel policy simply doesn't add this.
-// (Light markers keep their own wheel inside the component and never let it
-// bubble out here.) Logged so a nice default camera-z is easy to pick.
-view.addEventListener('wheel', e => {
-  e.preventDefault();
-  state.cameraZ = Math.min(-2, Math.max(-10, state.cameraZ - e.deltaY * 0.005));
-  scn.camera.value = String(state.cameraZ);
-  console.log('[ray-color] camera-z', state.cameraZ.toFixed(2));
-  sound.playTick();
-  syncOutputs();
-  view.update();
-}, { passive: false });
+// No scroll-to-dolly: the camera distance lives on the drawer's slider.
+// (Scroll on a light marker still adjusts its distance — that wheel is part
+// of the light's control kit inside the component.)
 
 view.addEventListener('change', e => {
   const kind = (e as CustomEvent).detail.kind as InputKind;

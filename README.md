@@ -156,9 +156,9 @@ f64 CPU engine.
 
 The component never captures page scroll: the camera distance is set with
 the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
-scroll-to-dolly is the embedding page's decision — the playground adds it
-with a three-line `wheel` listener. Only the light markers handle wheel
-themselves (orbit distance), and they stop it from bubbling out.
+scroll-to-dolly is the embedding page's decision — a `wheel` listener on the
+element that nudges `cameraZ` is all it takes. Only the light markers handle
+wheel themselves (orbit distance), and they stop it from bubbling out.
 
 The overlay styling is themable through CSS custom properties on the element
 (or any ancestor):
