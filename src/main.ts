@@ -1008,7 +1008,8 @@ function playFrame(now: number) {
   requestAnimationFrame(playFrame);
 }
 
-playBtn.addEventListener('click', () => {
+playBtn.addEventListener('click', e => {
+  e.stopPropagation(); // the drawer's own click handling must not toggle it shut
   playing = !playing;
   playBtn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
   playBtn.setAttribute('aria-pressed', String(playing));

@@ -583,6 +583,32 @@ body.colors-open.controls-open .l-main {
   justify-content: center;
 }
 
+/* Play sits at the rail's foot (mirroring the export corner on the left) and
+   only surfaces while the drawer is open — same reveal as the export footer */
+.control-rail__play {
+  margin-top: auto;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 0;
+  border-top: var(--s-line) solid var(--line);
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s linear 0.15s;
+}
+
+body.controls-open .control-rail__play {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .control-rail__light svg {
   width: 1rem;
   height: 1rem;
