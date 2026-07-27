@@ -788,18 +788,32 @@ body.controls-open .l-overlay__body--controls > .drawer-hint {
 
 /* Lib snippet: code that reproduces the current palette headlessly */
 
-/* The snippet slides in with the same motion as the palette rows,
-   arriving after the last row's reveal */
+/* The snippet slides in with the same motion as the palette rows, arriving
+   after the last row's reveal. Parked with display: none while the drawer is
+   closed — it re-renders on every scene change, and this keeps those updates
+   layout-free. allow-discrete flips display only once the slide-out ends. */
 .lib-snippet {
+  display: none;
   opacity: 0;
   transform: translateX(4rem);
-  transition: transform 0.3s cubic-bezier(0.3, 0.7, 0, 1), opacity 0.2s linear;
+  transition:
+    transform 0.3s cubic-bezier(0.3, 0.7, 0, 1),
+    opacity 0.2s linear,
+    display 0.3s allow-discrete;
 }
 
 body.colors-open .lib-snippet {
+  display: block;
   opacity: 1;
   transform: translateX(0);
   transition-delay: 290ms;
+}
+
+@starting-style {
+  body.colors-open .lib-snippet {
+    opacity: 0;
+    transform: translateX(4rem);
+  }
 }
 
 .lib-snippet {
