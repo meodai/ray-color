@@ -36,10 +36,14 @@ function hexAttr(el: Element, name: string, fallback: string) {
   return v && isHexColor(v) ? (v[0] === '#' ? v : '#' + v) : fallback;
 }
 
+// server-side rendering imports this module without a DOM; the classes only
+// need a real HTMLElement once a browser registers them
+const ElementBase = (typeof HTMLElement === 'undefined' ? class {} : HTMLElement) as typeof HTMLElement;
+
 const LIGHT_TYPES = new Set(['point', 'area', 'directional', 'spot']);
 
 /** Attribute bag for one light. All state lives in attributes. */
-export class RayColorLightElement extends HTMLElement {
+export class RayColorLightElement extends ElementBase {
   toLight(): Light {
     const type = this.getAttribute('type') ?? 'directional';
     return {
@@ -67,7 +71,7 @@ export class RayColorLightElement extends HTMLElement {
 }
 
 /** Attribute bag for the sampling shape. */
-export class RayColorShapeElement extends HTMLElement {
+export class RayColorShapeElement extends ElementBase {
   toShape(): ShapeInit | null {
     const kind = this.getAttribute('kind');
     if (kind !== 'line' && kind !== 'circle') return null;
@@ -101,7 +105,7 @@ const DEFAULT_LIGHTS = (): Light[] => [
   { type: 'directional', yaw: -39, pitch: -35, dist: 2, hex: '#00ffb3', intensity: 0.2, angle: 30, size: 0.15 },
 ];
 
-export class RayColorViewElement extends HTMLElement {
+export class RayColorViewElement extends ElementBase {
   static observedAttributes = ['mode', 'count', 'spacing', 'controls', ...SCENE_ATTRS];
 
   private core: ViewCore | null = null;
@@ -412,6 +416,7 @@ export class RayColorViewElement extends HTMLElement {
 /** Register the elements. glFactory carries the WebGL2 preview constructor —
  * the software-only entry passes null and ships no shader code. */
 export function defineRayColorView(glFactory: GlFactory | null) {
+  if (typeof customElements === 'undefined') return;
   if (customElements.get('ray-color-view')) return;
   customElements.define('ray-color-light', RayColorLightElement);
   customElements.define('ray-color-shape', RayColorShapeElement);
