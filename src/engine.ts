@@ -385,6 +385,9 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
       areaV[i][2] = ax * uy - ay * ux;
     }
     updateCamera();
+    // so commit() + renderPass() without beginFrame() never re-shades hits
+    // cached for an old camera or radius
+    syncGeometry();
   }
 
   function updateCamera() {
@@ -409,7 +412,11 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   function beginFrame() {
     ensurePixelBuffers();
     updateCamera();
-    // Invalidate the G-buffer when anything that shapes primary rays changed
+    syncGeometry();
+  }
+
+  // Invalidate the G-buffer when anything that shapes primary rays changed
+  function syncGeometry() {
     if (gbCameraZ !== scene.cameraZ || gbFov !== scene.fov || gbRadius !== scene.sphereRadius) {
       geomStamp++;
       gbCameraZ = scene.cameraZ;
