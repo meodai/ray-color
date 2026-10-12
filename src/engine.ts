@@ -311,17 +311,34 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
 
   // Camera cache
   let cachedTanFov = 0, cachedAspectRatio = 1, cachedAspectTanFov = 0;
-  const rayDirectionCache = new Float32Array(width * height * 3);
   let cachedRayFOV = NaN;
 
+  // Per-pixel buffers (~66 bytes a pixel), allocated on the first call that
+  // touches pixels: a palette-only engine never needs them.
+  let pixelBuffers = false;
+  let rayDirectionCache = new Float32Array(0);
   // G-buffer: per-pixel primary-hit cache (kind, position, normal). Valid while
   // the camera and sphere geometry are unchanged — light edits then skip all
   // primary intersection work and only re-shade.
-  const gbKind = new Uint8Array(width * height);   // 0 miss · 1 sphere · 2 wall
-  const gbData = new Float64Array(width * height * 6); // x y z nx ny nz (f64 = exact re-shades)
-  const gbStamp = new Uint32Array(width * height);
+  let gbKind = new Uint8Array(0);   // 0 miss · 1 sphere · 2 wall
+  let gbData = new Float64Array(0); // x y z nx ny nz (f64 = exact re-shades)
+  let gbStamp = new Uint32Array(0);
   let geomStamp = 1;
   let gbCameraZ = NaN, gbFov = NaN, gbRadius = NaN;
+  // Edge mask scratch for refineEdges (1 byte per pixel, reused per call)
+  let aaEdge = new Uint8Array(0);
+
+  function ensurePixelBuffers() {
+    if (pixelBuffers) return;
+    pixelBuffers = true;
+    rayDirectionCache = new Float32Array(width * height * 3);
+    gbKind = new Uint8Array(width * height);
+    gbData = new Float64Array(width * height * 6);
+    gbStamp = new Uint32Array(width * height);
+    aaEdge = new Uint8Array(width * height);
+    cachedRayFOV = NaN;
+    updateCamera();
+  }
 
   function commit() {
     hexToRgb(scene.sphereHex, sphereColor);
@@ -374,7 +391,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     cachedTanFov = Math.tan(((scene.fov * Math.PI) / 180) / 2);
     cachedAspectRatio = width / height;
     cachedAspectTanFov = cachedAspectRatio * cachedTanFov;
-    if (cachedRayFOV === scene.fov) return;
+    if (!pixelBuffers || cachedRayFOV === scene.fov) return;
     cachedRayFOV = scene.fov;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -390,6 +407,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   }
 
   function beginFrame() {
+    ensurePixelBuffers();
     updateCamera();
     // Invalidate the G-buffer when anything that shapes primary rays changed
     if (gbCameraZ !== scene.cameraZ || gbFov !== scene.fov || gbRadius !== scene.sphereRadius) {
@@ -789,6 +807,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   // skipStride: pixels whose coordinates are multiples of it were already
   // computed exactly by the previous (coarser) pass — leave them untouched
   function renderPass(out: Uint8ClampedArray, scale: number, skipStride = 0) {
+    ensurePixelBuffers();
     for (let y = 0; y < height; y += scale) {
       for (let x = 0; x < width; x += scale) {
         if (skipStride !== 0 && x % skipStride === 0 && y % skipStride === 0) continue;
@@ -880,10 +899,8 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     return shadeScratch;
   }
 
-  // Edge mask scratch for refineEdges (1 byte per pixel, reused per call)
-  const aaEdge = new Uint8Array(width * height);
-
   function refineEdges(out: Uint8ClampedArray, threshold = 24) {
+    ensurePixelBuffers();
     aaEdge.fill(0);
     // Detect first, refine after — refining in place would shift the very
     // contrasts the detection reads and cascade across the image
@@ -939,6 +956,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     // out-of-range reads would be undefined -> NaN, which slips past every
     // `< 0` test in intersectSphere and comes back as a NaN "hit"
     if (!(px >= 0 && px < width && py >= 0 && py < height)) return null;
+    ensurePixelBuffers();
     const idx = (py * width + px) * 3;
     const dirX = rayDirectionCache[idx];
     const dirY = rayDirectionCache[idx + 1];
