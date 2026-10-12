@@ -121,6 +121,17 @@ export function slerp(a: ArrayLike<number>, b: ArrayLike<number>, t: number, out
     out[0] = a[0]; out[1] = a[1]; out[2] = a[2];
     return out;
   }
+  if (Math.PI - theta < 1e-6) {
+    // antipodal: every great circle joins a and b, so the arc is undefined
+    // (the weights below would collapse to a zero vector). Take the one
+    // through a's deterministic tangent u, the same basis circles use.
+    circleBasis(a, cbU, cbV);
+    const c = Math.cos(t * Math.PI), s = Math.sin(t * Math.PI);
+    out[0] = c * a[0] + s * cbU[0];
+    out[1] = c * a[1] + s * cbU[1];
+    out[2] = c * a[2] + s * cbU[2];
+    return out;
+  }
   const invSin = 1 / Math.sin(theta);
   const wa = Math.sin((1 - t) * theta) * invSin;
   const wb = Math.sin(t * theta) * invSin;
