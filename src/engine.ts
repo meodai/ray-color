@@ -256,7 +256,8 @@ export interface Engine {
   readonly lights: Light[];
   /** Positions derived from yaw/pitch/dist on the last commit() — read-only. */
   readonly lightPositions: Float32Array;
-  /** Sync internal state from scene/lights. Clamps each light's dist in place. */
+  /** Sync internal state from scene/lights after mutating them (createEngine
+   * commits once itself). Clamps each light's dist in place. */
   commit(): void;
   /** Call once before a progressive pass sequence (invalidates hit caches). */
   beginFrame(): void;
@@ -999,6 +1000,9 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   function isLightOccluded(i: number) {
     return isPointOccluded(lightPositions[i * 3], lightPositions[i * 3 + 1], lightPositions[i * 3 + 2], 1e-3);
   }
+
+  // decode the scene up front: an uncommitted engine shades everything black
+  commit();
 
   return {
     width,
