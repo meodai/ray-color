@@ -51,6 +51,30 @@ export interface Scene {
    * walls mirror the sphere/room visually AND act as virtual light sources:
    * lights bounce off them onto the sphere, tinted by the wall color. */
   wallReflect: { back: number; left: number; right: number; top: number; bottom: number };
+  /** Lens glow around the brightest light, part of every color the engine
+   * produces: rendered pixels and shade() alike, so samples still match their
+   * pixels. Being a screen effect, it makes colors depend on the camera
+   * (cameraZ, fov, aspect), and points hidden on the back of the sphere get
+   * none. Absent or strength 0: off. */
+  bloom?: Bloom;
+}
+
+export interface Bloom {
+  /** Glow strength; 0 turns bloom off. */
+  strength: number;
+  /** Linear brightness where the glow starts (soft knee). Default 0.8. */
+  threshold?: number;
+  /** Spread of the tightest glow layer, as a fraction of the view height.
+   * Wider layers double it each step. Default 0.02. */
+  radius?: number;
+}
+
+/** The engine's glow as a linear-RGB image, strength applied: GLOW_ROWS tall,
+ * columns by aspect ratio, top row first. */
+export interface GlowMap {
+  readonly width: number;
+  readonly height: number;
+  readonly data: Float32Array;
 }
 
 export interface Hit {
@@ -67,6 +91,10 @@ export const DEFAULT_PASS_SCALES = [4, 2, 1];
  * palette sampling via shade() is resolution-independent anyway. */
 export const DEFAULT_ENGINE_SIZE = 400;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+/** Bloom is computed on a fixed grid this many rows tall, whatever the canvas
+ * size, which keeps glowing palettes resolution independent. */
+export const GLOW_ROWS = 128;
+const GLOW_LEVELS = 5;
 
 // ---------------------------------------------------------------- color space
 
@@ -248,6 +276,78 @@ export function sampleCircleDirs(center: ArrayLike<number>, rho: number, count: 
   return dirs;
 }
 
+// ---------------------------------------------------------------- bloom helpers
+
+// RGB grids, row-major, top row first
+
+function downsample(src: Float64Array, w: number, h: number, nw: number, nh: number) {
+  const out = new Float64Array(nw * nh * 3);
+  for (let y = 0; y < nh; y++) {
+    for (let x = 0; x < nw; x++) {
+      const x0 = Math.min(w - 1, x * 2), x1 = Math.min(w - 1, x * 2 + 1);
+      const y0 = Math.min(h - 1, y * 2), y1 = Math.min(h - 1, y * 2 + 1);
+      const o = (y * nw + x) * 3;
+      for (let c = 0; c < 3; c++) {
+        out[o + c] = (src[(y0 * w + x0) * 3 + c] + src[(y0 * w + x1) * 3 + c] +
+          src[(y1 * w + x0) * 3 + c] + src[(y1 * w + x1) * 3 + c]) * 0.25;
+      }
+    }
+  }
+  return out;
+}
+
+/** Separable Gaussian; outside the grid counts as black (no light comes from
+ * beyond the frame). */
+function blur(src: Float64Array, w: number, h: number, sigma: number) {
+  const r = Math.ceil(sigma * 3);
+  const k = new Float64Array(2 * r + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) sum += (k[i + r] = Math.exp(-(i * i) / (2 * sigma * sigma)));
+  for (let i = 0; i < k.length; i++) k[i] /= sum;
+  const tmp = new Float64Array(src.length);
+  const out = new Float64Array(src.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0, b = 0, c = 0;
+      for (let i = Math.max(-r, -x); i <= Math.min(r, w - 1 - x); i++) {
+        const s = (y * w + x + i) * 3, wt = k[i + r];
+        a += src[s] * wt; b += src[s + 1] * wt; c += src[s + 2] * wt;
+      }
+      const o = (y * w + x) * 3;
+      tmp[o] = a; tmp[o + 1] = b; tmp[o + 2] = c;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0, b = 0, c = 0;
+      for (let i = Math.max(-r, -y); i <= Math.min(r, h - 1 - y); i++) {
+        const s = ((y + i) * w + x) * 3, wt = k[i + r];
+        a += tmp[s] * wt; b += tmp[s + 1] * wt; c += tmp[s + 2] * wt;
+      }
+      const o = (y * w + x) * 3;
+      out[o] = a; out[o + 1] = b; out[o + 2] = c;
+    }
+  }
+  return out;
+}
+
+/** Bilinear lookup at normalized (u, v) with texel centers at (i + 0.5) / w
+ * and clamp-to-edge, the same convention as a GPU texture. */
+function bilinear(src: Float64Array, w: number, h: number, u: number, v: number, out: Float64Array) {
+  const fx = Math.min(w - 1, Math.max(0, u * w - 0.5));
+  const fy = Math.min(h - 1, Math.max(0, v * h - 0.5));
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+  const tx = fx - x0, ty = fy - y0;
+  const i00 = (y0 * w + x0) * 3, i10 = (y0 * w + x1) * 3, i01 = (y1 * w + x0) * 3, i11 = (y1 * w + x1) * 3;
+  for (let c = 0; c < 3; c++) {
+    const top = src[i00 + c] + (src[i10 + c] - src[i00 + c]) * tx;
+    const bot = src[i01 + c] + (src[i11 + c] - src[i01 + c]) * tx;
+    out[c] = top + (bot - top) * ty;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- engine
 
 export interface Engine {
@@ -281,6 +381,9 @@ export interface Engine {
   /** Is the sphere between the camera and this world-space point? */
   isPointOccluded(x: number, y: number, z: number, eps?: number): boolean;
   tanFov(): number;
+  /** The current bloom glow (null when bloom is off), for renderers that
+   * want to add the exact same glow, like the WebGL preview. */
+  glow(): GlowMap | null;
 }
 
 /** Palette-only form: resolution doesn't affect shade(), so it defaults. */
@@ -389,6 +492,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
       areaV[i][2] = ax * uy - ay * ux;
     }
     updateCamera();
+    glowDirty = true;
     // so commit() + renderPass() without beginFrame() never re-shades hits
     // cached for an old camera or radius
     syncGeometry();
@@ -813,12 +917,118 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     return wallShadeScratch;
   }
 
+  // ---------------------------------------------------------------- bloom
+  // Threshold the HDR (unclipped) image on a fixed grid, blur it at
+  // GLOW_LEVELS octaves (each level half the resolution of the last, blurred
+  // with the same kernel, so the spread doubles), and sum the levels back at
+  // grid resolution. Every color lookup then reads that one buffer with the
+  // same bilinear filter, which keeps shade() and the pixels identical.
+
+  const glowW = Math.max(1, Math.round(GLOW_ROWS * width / height));
+  const glowH = GLOW_ROWS;
+  let glowDirty = true;
+  let glowData = new Float64Array(0);
+  let glowMap: GlowMap | null = null;
+  const glowScratch = new Float64Array(3);
+
+  const bloomActive = () => !!scene.bloom && scene.bloom.strength > 0;
+
+  /** Rebuild the glow if commit() invalidated it; false when bloom is off. */
+  function ensureGlow() {
+    if (!bloomActive()) return false;
+    if (glowDirty) {
+      buildGlow();
+      glowDirty = false;
+    }
+    return true;
+  }
+
+  function buildGlow() {
+    const b = scene.bloom!;
+    const threshold = Math.max(0, b.threshold ?? 0.8);
+    const knee = threshold * 0.5;
+    const W = glowW, H = glowH;
+    let level = new Float64Array(W * H * 3);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const px = (2 * ((x + 0.5) / W) - 1) * cachedAspectTanFov;
+        const py = -(2 * ((y + 0.5) / H) - 1) * cachedTanFov;
+        const len = Math.sqrt(px * px + py * py + 1);
+        const c = traceRay(px / len, py / len, 1 / len);
+        const m = Math.max(c.r, c.g, c.b);
+        if (m <= 0) continue;
+        // soft knee: ramps in quadratically around the threshold
+        let soft = Math.min(2 * knee, Math.max(0, m - threshold + knee));
+        soft = soft * soft / (4 * knee + 1e-4);
+        const w = Math.max(soft, m - threshold) / m;
+        const i = (y * W + x) * 3;
+        level[i] = c.r * w; level[i + 1] = c.g * w; level[i + 2] = c.b * w;
+      }
+    }
+    if (glowData.length !== W * H * 3) glowData = new Float64Array(W * H * 3);
+    glowData.fill(0);
+    const sigma = Math.max(0.5, (b.radius ?? 0.02) * H);
+    const scale = b.strength / GLOW_LEVELS;
+    let lw = W, lh = H;
+    for (let k = 0; k < GLOW_LEVELS; k++) {
+      if (k > 0) {
+        const nw = Math.max(1, lw >> 1), nh = Math.max(1, lh >> 1);
+        level = downsample(level, lw, lh, nw, nh);
+        lw = nw; lh = nh;
+      }
+      const blurred = blur(level, lw, lh, sigma);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          bilinear(blurred, lw, lh, (x + 0.5) / W, (y + 0.5) / H, glowScratch);
+          const i = (y * W + x) * 3;
+          glowData[i] += glowScratch[0] * scale;
+          glowData[i + 1] += glowScratch[1] * scale;
+          glowData[i + 2] += glowScratch[2] * scale;
+        }
+      }
+    }
+    glowMap = null;
+  }
+
+  /** Glow at a normalized screen position (u right, v down, 0..1). */
+  function glowAt(u: number, v: number) {
+    if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) {
+      glowScratch[0] = glowScratch[1] = glowScratch[2] = 0;
+      return glowScratch;
+    }
+    return bilinear(glowData, glowW, glowH, u, v, glowScratch);
+  }
+
+  // Glow for a sphere surface point (radius-scaled normal), looked up where
+  // the point lands on screen. shade() and the pixel path both come through
+  // here with the same coordinates, so they read the same value.
+  function sphereGlowAt(hx: number, hy: number, hz: number) {
+    // hidden from the camera: not in the picture, so no glow
+    if (hz * scene.cameraZ - (hx * hx + hy * hy + hz * hz) <= 0) {
+      glowScratch[0] = glowScratch[1] = glowScratch[2] = 0;
+      return glowScratch;
+    }
+    const relZ = hz - scene.cameraZ;
+    return glowAt((hx / (relZ * cachedAspectTanFov) + 1) / 2, (-hy / (relZ * cachedTanFov) + 1) / 2);
+  }
+
+  function addGlow(c: RGB, g: Float64Array) {
+    c.r += g[0]; c.g += g[1]; c.b += g[2];
+  }
+
+  function glow(): GlowMap | null {
+    if (!ensureGlow()) return null;
+    if (!glowMap) glowMap = { width: glowW, height: glowH, data: Float32Array.from(glowData) };
+    return glowMap;
+  }
+
   // ---------------------------------------------------------------- rendering
 
   // skipStride: pixels whose coordinates are multiples of it were already
   // computed exactly by the previous (coarser) pass — leave them untouched
   function renderPass(out: Uint8ClampedArray, scale: number, skipStride = 0) {
     ensurePixelBuffers();
+    const bloom = ensureGlow();
     for (let y = 0; y < height; y += scale) {
       for (let x = 0; x < width; x += scale) {
         if (skipStride !== 0 && x % skipStride === 0 && y % skipStride === 0) continue;
@@ -872,6 +1082,14 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
           }
           gbStamp[pix] = geomStamp;
         }
+        if (bloom) {
+          if (gbKind[pix] === 1) {
+            const o = pix * 6;
+            addGlow(color, sphereGlowAt(gbData[o], gbData[o + 1], gbData[o + 2]));
+          } else {
+            addGlow(color, glowAt((x + 0.5) / width, (y + 0.5) / height));
+          }
+        }
         const r = toSRGB8(color.r);
         const g = toSRGB8(color.g);
         const b = toSRGB8(color.b);
@@ -894,11 +1112,28 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     const rx = (2 * (px / width) - 1) * cachedAspectTanFov;
     const ry = -(2 * (py / height) - 1) * cachedTanFov;
     const len = Math.sqrt(rx * rx + ry * ry + 1);
-    const dirX = rx / len, dirY = ry / len, dirZ = 1 / len;
+    const c = traceRay(rx / len, ry / len, 1 / len);
+    if (bloomActive()) {
+      addGlow(c, lastTraceSphere
+        ? sphereGlowAt(lastHit[0], lastHit[1], lastHit[2])
+        : glowAt(px / width, py / height));
+    }
+    return c;
+  }
+
+  // Shade a primary ray from the camera, without glow. Records whether it hit
+  // the sphere (and where) for the glow lookup that may follow.
+  let lastTraceSphere = false;
+  const lastHit = new Float64Array(3);
+  function traceRay(dirX: number, dirY: number, dirZ: number): RGB {
     const sphereHit = intersectSphere(0, 0, scene.cameraZ, dirX, dirY, dirZ, scene.sphereRadius);
+    lastTraceSphere = !!sphereHit;
     if (sphereHit) {
+      lastHit[0] = sphereHit.nx * scene.sphereRadius;
+      lastHit[1] = sphereHit.ny * scene.sphereRadius;
+      lastHit[2] = sphereHit.nz * scene.sphereRadius;
       return calculateLighting(
-        sphereHit.nx * scene.sphereRadius, sphereHit.ny * scene.sphereRadius, sphereHit.nz * scene.sphereRadius,
+        lastHit[0], lastHit[1], lastHit[2],
         sphereHit.nx, sphereHit.ny, sphereHit.nz,
         sphereColor[0], sphereColor[1], sphereColor[2]);
     }
@@ -912,6 +1147,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
 
   function refineEdges(out: Uint8ClampedArray, threshold = 24) {
     ensurePixelBuffers();
+    ensureGlow();
     aaEdge.fill(0);
     // Detect first, refine after — refining in place would shift the very
     // contrasts the detection reads and cascade across the image
@@ -977,7 +1213,12 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
 
   function shade(dir: ArrayLike<number>) {
     const r = scene.sphereRadius;
-    return calculateLighting(dir[0] * r, dir[1] * r, dir[2] * r, dir[0], dir[1], dir[2], sphereColor[0], sphereColor[1], sphereColor[2]);
+    const hx = dir[0] * r, hy = dir[1] * r, hz = dir[2] * r;
+    // before shading: a glow rebuild traces rays and reuses the shade scratch
+    const bloom = ensureGlow();
+    const c = calculateLighting(hx, hy, hz, dir[0], dir[1], dir[2], sphereColor[0], sphereColor[1], sphereColor[2]);
+    if (bloom) addGlow(c, sphereGlowAt(hx, hy, hz));
+    return c;
   }
 
   function worldToScreen(px: number, py: number, pz: number) {
@@ -1050,5 +1291,6 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     isLightOccluded,
     isPointOccluded,
     tanFov: () => cachedTanFov,
+    glow,
   };
 }

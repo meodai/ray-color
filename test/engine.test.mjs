@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  createEngine, sampleLineDirs, sampleCircleDirs, slerp, hexToRgb, toSRGB8, distributions,
+  createEngine, sampleLineDirs, sampleCircleDirs, slerp, hexToRgb, toSRGB8, distributions, GLOW_ROWS,
 } from '../lib/ray-color.js';
 
 const W = 120, H = 90;
@@ -141,4 +141,45 @@ test('the view entries import without a DOM', async () => {
     const mod = await import(`../lib/${entry}.js`);
     assert.equal(typeof mod.defineRayColorView, 'function');
   }
+});
+
+const bloomScene = () => ({ ...makeScene(), bloom: { strength: 1.2, threshold: 0.6 } });
+const hotLights = () => makeLights().map(l => ({ ...l, intensity: l.intensity * 6 }));
+
+test('bloom changes the palette, deterministically and at any resolution', () => {
+  const dirs = sampleCircleDirs([0, 0, -1], 0.9, 7);
+  const glowing = dirs.map(d => hexOf(createEngine(bloomScene(), hotLights()).shade(d)));
+  const plain = dirs.map(d => hexOf(createEngine(makeScene(), hotLights()).shade(d)));
+  const other = createEngine(97, 97, bloomScene(), hotLights());
+  assert.notDeepEqual(glowing, plain);
+  assert.deepEqual(glowing, dirs.map(d => hexOf(other.shade(d))));
+});
+
+test('with bloom, a sampled color still matches its rendered pixel', () => {
+  const engine = createEngine(W, H, bloomScene(), hotLights());
+  const buf = render(engine, false);
+  for (let y = 0; y < H; y += 3) {
+    for (let x = 0; x < W; x += 3) {
+      const hit = engine.castRay(x, y);
+      if (!hit) continue;
+      const c = engine.shade([hit.nx, hit.ny, hit.nz]);
+      const i = (y * W + x) * 4;
+      assert.deepEqual([toSRGB8(c.r), toSRGB8(c.g), toSRGB8(c.b)], [buf[i], buf[i + 1], buf[i + 2]], `pixel ${x},${y}`);
+    }
+  }
+});
+
+test('bloom leaves points on the hidden side of the sphere alone', () => {
+  const back = [0, 0, 1];
+  const a = createEngine(bloomScene(), hotLights()).shade(back);
+  const b = createEngine(makeScene(), hotLights()).shade(back);
+  assert.deepEqual({ ...a }, { ...b });
+});
+
+test('glow() is null without bloom and a grid of GLOW_ROWS rows with it', () => {
+  assert.equal(createEngine(makeScene(), makeLights()).glow(), null);
+  const g = createEngine(200, 100, bloomScene(), hotLights()).glow();
+  assert.equal(g.height, GLOW_ROWS);
+  assert.equal(g.width, GLOW_ROWS * 2);
+  assert.equal(g.data.length, g.width * g.height * 3);
 });
