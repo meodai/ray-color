@@ -142,14 +142,16 @@ export function slerp(a: ArrayLike<number>, b: ArrayLike<number>, t: number, out
 }
 
 /** Deterministic tangent basis (u, v) of the circle plane for a center anchor.
- * Angle 0 lies along u; angles grow toward v. */
+ * Angle 0 lies along u; angles grow toward v. u = normalize(up x center), so
+ * the basis turns continuously as the center moves; only the poles themselves
+ * (where up x center vanishes) fall back to the x axis as helper. */
 export function circleBasis(center: ArrayLike<number>, u: Float64Array, v: Float64Array) {
-  const hy = Math.abs(center[1]) > 0.99 ? 0 : 1;
-  const hx = 1 - hy;
-  const ux = hy * center[2];
-  const uy = -hx * center[2];
-  const uz = hx * center[1] - hy * center[0];
-  const ulen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+  let ux = center[2], uy = 0, uz = -center[0];
+  let ulen = Math.sqrt(ux * ux + uz * uz);
+  if (ulen < 1e-12) {
+    ux = 0; uy = -center[2]; uz = center[1];
+    ulen = Math.sqrt(uy * uy + uz * uz) || 1;
+  }
   u[0] = ux / ulen; u[1] = uy / ulen; u[2] = uz / ulen;
   v[0] = center[1] * u[2] - center[2] * u[1];
   v[1] = center[2] * u[0] - center[0] * u[2];
