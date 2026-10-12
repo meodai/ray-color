@@ -216,7 +216,16 @@ export class ViewCore {
       // WebGL2 preview: instant f32 frames while interacting; the f64 CPU
       // render (the one palettes sample from, bit-for-bit) lands once
       // interaction settles. Null without WebGL2 — falls back to CPU-only.
-      this.glPreview = this.glFactory(this.canvas.width, this.canvas.height);
+      try {
+        this.glPreview = this.glFactory(this.canvas.width, this.canvas.height);
+      } catch (err) {
+        console.warn(err);
+      }
+      // the preview would drop the extra lights and pop them in on settle
+      if (this.glPreview && this.lights.length > this.glPreview.maxLights) {
+        this.glPreview.dispose();
+        this.glPreview = null;
+      }
       if (this.glPreview) {
         this.glPreview.canvas.classList.add('gl-canvas');
         this.glPreview.canvas.setAttribute('aria-hidden', 'true');

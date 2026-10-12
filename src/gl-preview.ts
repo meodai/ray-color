@@ -358,6 +358,8 @@ void main() {
 
 export interface GlPreview {
   readonly canvas: HTMLCanvasElement;
+  /** Lights past this count are not drawn; hosts with more should stay CPU-only. */
+  readonly maxLights: number;
   /** Upload the current scene/lights and render one frame. Reads the same
    * mutable objects the engine does; call after values change (no commit()
    * needed — light positions are derived the same way commit() derives them,
@@ -371,7 +373,8 @@ export interface GlPreview {
 
 const TYPE_CODE: Record<Light['type'], number> = { point: 0, area: 1, directional: 2, spot: 3 };
 
-/** Returns null when WebGL2 is unavailable — callers fall back to CPU-only. */
+/** Returns null when WebGL2 is unavailable or the shader fails to build on this
+ * driver — callers fall back to CPU-only. */
 export function createGlPreview(
   width: number,
   height: number,
@@ -403,13 +406,18 @@ export function createGlPreview(
   }
 
   const program = gl.createProgram()!;
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    const log = gl.getProgramInfoLog(program);
+  try {
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(`ray-color gl-preview link: ${gl.getProgramInfoLog(program)}`);
+    }
+  } catch (err) {
+    console.warn(err);
     gl.deleteProgram(program);
-    throw new Error(`ray-color gl-preview link: ${log}`);
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return null;
   }
   gl.useProgram(program);
   const loc = (name: string) => gl.getUniformLocation(program, name);
@@ -544,5 +552,5 @@ export function createGlPreview(
     gl!.getExtension('WEBGL_lose_context')?.loseContext();
   }
 
-  return { canvas, draw, resize, readPixels, dispose };
+  return { canvas, maxLights: MAX_LIGHTS, draw, resize, readPixels, dispose };
 }
