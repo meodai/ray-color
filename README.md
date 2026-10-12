@@ -168,15 +168,11 @@ f64 CPU engine.
 <ray-color-view controls bloom="1.2" bloom-threshold="0.6"></ray-color-view>
 ```
 
-`bloom` adds a glow around the brightest parts of the image (a bare `bloom`
-attribute means strength 1; `bloom-threshold` is the linear brightness where
-the glow starts, default 0.8). It is display only: a WebGL2 overlay blended
-on top of whatever frame is showing. `shade()`, `colors()` and
-`palettechange` never include it, so the palette stays exact while the
-picture glows. Near bright highlights a sample dot will look darker than the
-glowing pixels around it; the dot shows the real color.
-`view.exportImage()` leaves the glow out, and `view.exportImage({ bloom: true })`
-includes it. The software-only entry ships without bloom.
+`bloom` adds a lens glow around the brightest light (a bare `bloom` attribute
+means strength 1; `bloom-threshold` is the linear brightness where the glow
+starts, default 0.8). The same settings are `view.bloom` and
+`view.bloomThreshold`. The glow is part of the picture, so it is part of the
+palette too: see [Bloom](#bloom-1) in the library section.
 
 The component never captures page scroll: the camera distance is set with
 the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
@@ -213,6 +209,21 @@ Reflective walls do two things: they visually mirror the sphere and room
 mirrored across each reflective panel and illuminates the sphere from that
 direction, tinted by the wall color. That's the tabletop bouncing warm light
 back onto the tennis ball.
+
+### Bloom
+
+`scene.bloom = { strength, threshold?, radius? }` adds a lens glow around the
+brightest light, and every color the engine produces includes it: rendered
+pixels and `shade()` alike, so a sample still matches its pixel bit for bit.
+
+The engine computes the glow itself, in f64 on a fixed grid (`GLOW_ROWS`
+rows, columns by aspect ratio): it thresholds the unclipped image, so
+lights brighter than white glow harder, and blurs it at five octaves starting
+at `radius` (a fraction of the view height, default 0.02). Palettes stay
+deterministic and independent of canvas size. Being a lens effect, the glow
+does depend on the camera (`cameraZ`, `fov`, aspect ratio), and points hidden
+on the back of the sphere get none. `engine.glow()` returns the glow image for
+renderers that want to add the same glow, like the WebGL preview does.
 
 ### Guarantees
 

@@ -15,7 +15,6 @@ import type { Light, Scene, RGB } from '../engine.js';
 import { toSRGB8, isHexColor } from '../engine.js';
 import { ViewCore, type GlFactory, type InputKind, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core.js';
 import { VIEW_STYLES } from './styles.js';
-import type { BloomFactory } from '../bloom.js';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
 // shape anchors get more digits: 3 decimals moved them by up to ~1e-3 rad,
@@ -120,7 +119,7 @@ export interface RayColorViewEventMap extends HTMLElementEventMap {
   settled: CustomEvent<Record<string, never>>;
 }
 
-const SCENE_ATTRS = ['fov', 'camera-z', 'sphere-radius', 'sphere-hex', 'wall-hex', 'indirect', 'area-quality', 'wall-reflect'] as const;
+const SCENE_ATTRS = ['fov', 'camera-z', 'sphere-radius', 'sphere-hex', 'wall-hex', 'indirect', 'area-quality', 'wall-reflect', 'bloom', 'bloom-threshold'] as const;
 type SceneAttr = typeof SCENE_ATTRS[number];
 
 const SCENE_DEFAULTS = (): Scene => ({
@@ -132,6 +131,7 @@ const SCENE_DEFAULTS = (): Scene => ({
   indirect: 0.3,
   areaQuality: 6,
   wallReflect: { back: 0, left: 0, right: 0, top: 0, bottom: 0 },
+  bloom: { strength: 0, threshold: 0.8 },
 });
 
 /** One value for every wall, or five in back/left/right/top/bottom order. */
@@ -157,6 +157,9 @@ function applySceneAttr(el: Element, scene: Scene, name: SceneAttr) {
     case 'indirect': scene.indirect = numAttr(el, name, d.indirect); break;
     case 'area-quality': scene.areaQuality = numAttr(el, name, d.areaQuality); break;
     case 'wall-reflect': scene.wallReflect = parseWallReflect(el.getAttribute(name)) ?? d.wallReflect; break;
+    // a bare `bloom` attribute means strength 1
+    case 'bloom': scene.bloom = { ...d.bloom, ...scene.bloom, strength: el.hasAttribute(name) ? numAttr(el, name, 1) : 0 }; break;
+    case 'bloom-threshold': scene.bloom = { ...d.bloom!, ...scene.bloom, threshold: numAttr(el, name, d.bloom!.threshold!) }; break;
   }
 }
 
@@ -172,6 +175,8 @@ function sceneAttrValues(sc: Scene): Record<SceneAttr, string> {
     'indirect': fmt(sc.indirect),
     'area-quality': fmt(sc.areaQuality),
     'wall-reflect': walls.every(v => v === walls[0]) ? fmt(walls[0]) : walls.map(fmt).join(' '),
+    'bloom': fmt(sc.bloom?.strength ?? 0),
+    'bloom-threshold': fmt(sc.bloom?.threshold ?? 0.8),
   };
 }
 
@@ -185,7 +190,7 @@ const DEFAULT_LIGHTS = (): Light[] => [
 ];
 
 export class RayColorViewElement extends ElementBase {
-  static observedAttributes = ['mode', 'count', 'spacing', 'controls', 'renderer', 'bloom', 'bloom-threshold', ...SCENE_ATTRS];
+  static observedAttributes = ['mode', 'count', 'spacing', 'controls', 'renderer', ...SCENE_ATTRS];
 
   private core: ViewCore | null = null;
   private childObserver: MutationObserver | null = null;
@@ -234,9 +239,6 @@ export class RayColorViewElement extends ElementBase {
       controls: this.hasAttribute('controls'),
       mode: parseMode(this.getAttribute('mode')),
       count: numAttr(this, 'count', 7),
-      bloomFactory: registeredBloomFactory,
-      bloom: this.bloomAttr(),
-      bloomThreshold: numAttr(this, 'bloom-threshold', 0.8),
       spacing: (this.getAttribute('spacing') as SpacingName) || 'linear',
     });
     this.core = core;
@@ -301,17 +303,10 @@ export class RayColorViewElement extends ElementBase {
     else if (name === 'spacing') core.spacing = (value as SpacingName) || 'linear';
     else if (name === 'controls') core.controls = value !== null;
     else if (name === 'renderer') this.rebuild(core.lights);
-    else if (name === 'bloom') core.bloom = this.bloomAttr();
-    else if (name === 'bloom-threshold') core.bloomThreshold = numAttr(this, 'bloom-threshold', 0.8);
     else if ((SCENE_ATTRS as readonly string[]).includes(name)) {
       applySceneAttr(this, core.scene, name as SceneAttr);
       core.update();
     }
-  }
-
-  /** `bloom` alone turns the glow on at strength 1; a number sets it. */
-  private bloomAttr() {
-    return this.hasAttribute('bloom') ? numAttr(this, 'bloom', 1) : 0;
   }
 
   // ------------------------------------------------------------ two-way sync
@@ -380,9 +375,6 @@ export class RayColorViewElement extends ElementBase {
       controls: this.hasAttribute('controls'),
       mode: keep.mode,
       count: keep.count,
-      bloomFactory: registeredBloomFactory,
-      bloom: core.bloom,
-      bloomThreshold: core.bloomThreshold,
       spacing: keep.spacing,
     });
     this.core = next;
@@ -463,21 +455,18 @@ export class RayColorViewElement extends ElementBase {
     else this.pending.shape = s;
   }
   get selectedLight() { return this.core?.selectedLight ?? -1; }
-  /** Display-only glow strength (0 = off); sampled colors never include it. */
-  get bloom(): number { return this.core?.bloom ?? this.bloomAttr(); }
+  /** Bloom strength (0 = off), shorthand for scene.bloom.strength. The glow
+   * is part of the sampled colors, like everything else in the picture. */
+  get bloom(): number { return this.currentBloom().strength; }
   set bloom(strength: number) {
-    if (this.core) this.core.bloom = strength;
-    if (strength > 0) this.reflectSimpleAttr('bloom', String(strength));
-    else {
-      this.applyingAttrs = true;
-      this.removeAttribute('bloom');
-      this.applyingAttrs = false;
-    }
+    this.scene = { bloom: { ...this.currentBloom(), strength: Math.max(0, strength || 0) } };
   }
-  get bloomThreshold(): number { return this.core?.bloomThreshold ?? numAttr(this, 'bloom-threshold', 0.8); }
-  set bloomThreshold(t: number) {
-    if (this.core) this.core.bloomThreshold = t;
-    this.reflectSimpleAttr('bloom-threshold', String(t));
+  get bloomThreshold(): number { return this.currentBloom().threshold ?? 0.8; }
+  set bloomThreshold(threshold: number) {
+    this.scene = { bloom: { ...this.currentBloom(), threshold } };
+  }
+  private currentBloom(): NonNullable<Scene['bloom']> {
+    return this.core?.scene.bloom ?? this.pending.scene?.bloom ?? SCENE_DEFAULTS().bloom!;
   }
 
   /** Discrete mode/count/spacing changes reflect immediately (unlike drags,
@@ -506,8 +495,7 @@ export class RayColorViewElement extends ElementBase {
   shade(dir: ArrayLike<number>): RGB | null { return this.core ? this.core.engine.shade(dir) : null; }
 
   update() { this.core?.update(); }
-  /** The settled frame with the sample dots; `bloom: true` adds the glow. */
-  exportImage(opts?: { bloom?: boolean }): HTMLCanvasElement | null { return this.core?.exportImage(opts) ?? null; }
+  exportImage(): HTMLCanvasElement | null { return this.core?.exportImage() ?? null; }
   ensureSettledCanvas() { this.core?.ensureSettledCanvas(); }
   selectLight(i: number) { this.core?.selectLight(i); }
   deleteSelection() { this.core?.deleteSelection(); }
@@ -535,17 +523,14 @@ declare global {
 // so importing ray-color/view after ray-color/view/software still gives views
 // connected from then on the WebGL2 preview.
 let registeredGlFactory: GlFactory | null = null;
-let registeredBloomFactory: BloomFactory | null = null;
 
 /** Register the elements. glFactory carries the WebGL2 preview constructor;
- * bloomFactory the display-only glow. The software-only entry passes null
- * for both and ships no shader code. Safe to call
+ * the software-only entry passes null and ships no shader code. Safe to call
  * repeatedly and from both entries: a factory, once given, is kept, and tags
  * some other code already defined are left alone. */
-export function defineRayColorView(glFactory: GlFactory | null, bloomFactory: BloomFactory | null = null) {
+export function defineRayColorView(glFactory: GlFactory | null) {
   if (typeof customElements === 'undefined') return;
   if (glFactory) registeredGlFactory = glFactory;
-  if (bloomFactory) registeredBloomFactory = bloomFactory;
   const define = (tag: string, ctor: CustomElementConstructor) => {
     const existing = customElements.get(tag);
     if (!existing) customElements.define(tag, ctor);

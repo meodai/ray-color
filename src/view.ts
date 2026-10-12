@@ -3,13 +3,11 @@
 // frame (and is always the one palettes sample from). Machines without
 // WebGL2 fall back to CPU-only automatically; renderer="software" opts out.
 import { createGlPreview } from './gl-preview.js';
-import { createBloom } from './bloom.js';
 import { defineRayColorView } from './view/element.js';
 
 export { RayColorViewElement, RayColorLightElement, RayColorShapeElement, defineRayColorView } from './view/element.js';
 export { LIGHT_TYPE_ICONS } from './view/icons.js';
 export type { PaletteColor, RayColorViewEventMap } from './view/element.js';
-export type { BloomFactory } from './bloom.js';
 export type { SampleMode, SpacingName, SurfaceShape, ShapeInit, InputKind, GlFactory } from './view/core.js';
 
-defineRayColorView(createGlPreview, createBloom);
+defineRayColorView(createGlPreview);

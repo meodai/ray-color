@@ -853,9 +853,7 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   e.stopPropagation();
   const colors = paletteData();
   if (!colors.length) return;
-  // settled f64 frame + sample dots, with the glow if it is on: the image
-  // matches the screen, while the strip below keeps the exact colors
-  const render = view.exportImage({ bloom: true });
+  const render = view.exportImage(); // settled f64 frame + sample dots
   if (!render) return;
   // Render + color strip below, like OKPalette's image export
   const stripHeight = 80;
