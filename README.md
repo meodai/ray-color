@@ -45,7 +45,7 @@ different angle.
 
 `src/engine.ts` is DOM-free: it renders into any `Uint8ClampedArray` and can
 generate palettes headlessly, no canvas required. The whole engine is about
-**6 kB gzipped** (ESM + CJS) with **zero runtime dependencies**.
+**7 kB gzipped** (ESM + CJS) with **zero runtime dependencies**.
 
 Sampling colors is resolution-independent, so for palettes you can skip the
 dimensions entirely; pass `createEngine(width, height, scene, lights)` when

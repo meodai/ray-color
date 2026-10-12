@@ -20,13 +20,15 @@ export default defineConfig({
       fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     outDir: 'lib',
-    sourcemap: true,
     rollupOptions: {
-      output: {
-        // shared engine/core code lands in chunks the entries import, so
-        // view + view-software never duplicate the engine
-        chunkFileNames: 'chunks/[name]-[hash].[format].js',
-      },
+      // shared engine/core code lands in chunks the entries import, so
+      // view + view-software never duplicate the engine. Sourcemaps ship for
+      // the ESM build only: they were most of the tarball, and CJS consumers
+      // are bundlers or Node scripts that rarely step into the engine.
+      output: [
+        { format: 'es', sourcemap: true, chunkFileNames: 'chunks/[name]-[hash].es.js' },
+        { format: 'cjs', sourcemap: false, chunkFileNames: 'chunks/[name]-[hash].cjs.js' },
+      ],
     },
   },
 });
