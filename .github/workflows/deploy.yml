@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
+      - run: npm test
       # project pages are served from /<repo>/, so the asset base must match
       - run: npx vite build --base=/ray-color/
       - uses: actions/upload-pages-artifact@v3

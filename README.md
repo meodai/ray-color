@@ -214,6 +214,7 @@ npm install
 npm run dev        # playground at localhost:5173
 npm run build      # typecheck + bundle the playground
 npm run build:lib  # bundle the library to lib/ (ESM + CJS + types)
+npm test           # build the library, then run the engine tests against it
 ```
 
 The engine lives in `src/engine.ts`; the playground (`src/main.ts`,
