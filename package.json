@@ -68,6 +68,7 @@
   "author": "David Aerne <meodai@gmail.com> (https://github.com/meodai)",
   "license": "MIT",
   "devDependencies": {
+    "sugar-high": "^2.6.0",
     "token-beam": "^1.32.0",
     "typescript": "~5.8.3",
     "vite": "^7.1.2"

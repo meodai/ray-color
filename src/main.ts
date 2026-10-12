@@ -4,6 +4,7 @@
 // panel, exports and sound, wired through the component's events and API.
 
 import { SourceSession, createCollection } from 'token-beam';
+import { highlight } from 'sugar-high';
 import { SoundManager } from './sound.js';
 import {
   toSRGB8,
@@ -662,7 +663,7 @@ function updateLibSnippet() {
     sampler = `const dirs = [\n${view.sampleDirs().map(d => '  ' + vec(d)).join(',\n')}\n];`;
   }
 
-  libSnippetCode.textContent = `import {
+  const code = `import {
   createEngine, toSRGB8${samplerImport}
 } from 'ray-color';
 
@@ -681,6 +682,31 @@ const hex = palette.map(c =>
   '#' + [c.r, c.g, c.b]
     .map(v => toSRGB8(v).toString(16)
     .padStart(2, '0')).join(''));`;
+  // sugar-high escapes the source, and copying still reads textContent
+  libSnippetCode.innerHTML = highlight(code);
+  colorSnippet();
+}
+
+// The snippet's tokens take palette colors that read on the code block,
+// spread from the first to the last so neighboring near-twins don't pair up.
+// The block is inverted (dark in light mode, white in dark mode), so the
+// luminance cut flips with the scheme; both cuts give about 3:1 against it.
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+darkScheme.addEventListener('change', () => colorSnippet());
+
+const SNIPPET_TOKENS = ['--sh-keyword', '--sh-class', '--sh-string', '--sh-property'];
+
+function colorSnippet() {
+  const readable = (y: number) => darkScheme.matches ? y < 0.3 : y > 0.18;
+  const hexes = [...new Set(view.rawColors()
+    .filter(c => readable(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]))
+    .map(c => '#' + hex6(c)))];
+  const style = (libSnippetPre as HTMLElement).style;
+  SNIPPET_TOKENS.forEach((prop, i) => {
+    const hex = hexes[Math.round(i * (hexes.length - 1) / (SNIPPET_TOKENS.length - 1))];
+    if (hex) style.setProperty(prop, hex);
+    else style.removeProperty(prop);
+  });
 }
 
 // ---------------------------------------------------------------- palette panel

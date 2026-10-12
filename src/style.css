@@ -729,6 +729,30 @@ body.colors-open .lib-snippet {
   white-space: pre;
 }
 
+/* sugar-high tokens: the playground is monochrome, so syntax is told apart
+   by tone and weight against the inverted block, not by hue */
+.code {
+  --sh-identifier: var(--bg);
+  --sh-keyword: var(--bg);
+  --sh-class: var(--bg);
+  --sh-string: color-mix(in lab, var(--bg) 82%, var(--text));
+  --sh-property: color-mix(in lab, var(--bg) 70%, var(--text));
+  --sh-entity: var(--bg);
+  --sh-jsxliterals: var(--bg);
+  --sh-sign: color-mix(in lab, var(--bg) 45%, var(--text));
+  --sh-comment: color-mix(in lab, var(--bg) 45%, var(--text));
+  --sh-space: inherit;
+  --sh-break: inherit;
+}
+
+.code .sh__token--keyword {
+  font-weight: 700;
+}
+
+.code .sh__token--comment {
+  font-style: italic;
+}
+
 .code ::selection,
 .code::selection {
   background: var(--bg);
