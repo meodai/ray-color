@@ -1687,7 +1687,7 @@ export class ViewCore {
   }
 
   private setMode(next: SampleMode) {
-    this._mode = next;
+    this._mode = next === 'points' || next === 'line' ? next : 'circle';
     this.sampleLayer.toggleAttribute('hidden', next !== 'points');
     this.ensureModeDefaults();
     this.refreshShape();

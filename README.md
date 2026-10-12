@@ -185,7 +185,9 @@ frame.
 
 ### Mirror walls
 
-`scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror).
+`scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror). On
+`<ray-color-view>` the `wall-reflect` attribute takes one value for every
+wall or five in `back left right top bottom` order.
 Reflective walls do two things: they visually mirror the sphere and room
 (one bounce), and they act as **virtual light sources** — every light is
 mirrored across each reflective panel and illuminates the sphere from that

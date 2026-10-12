@@ -114,6 +114,47 @@ export interface RayColorViewEventMap extends HTMLElementEventMap {
 }
 
 const SCENE_ATTRS = ['fov', 'camera-z', 'sphere-radius', 'sphere-hex', 'wall-hex', 'indirect', 'area-quality', 'wall-reflect'] as const;
+type SceneAttr = typeof SCENE_ATTRS[number];
+
+const SCENE_DEFAULTS = (): Scene => ({
+  cameraZ: -9.3,
+  fov: 30,
+  sphereRadius: 1.2,
+  sphereHex: '#ffffff',
+  wallHex: '#999999',
+  indirect: 0.3,
+  areaQuality: 6,
+  wallReflect: { back: 0, left: 0, right: 0, top: 0, bottom: 0 },
+});
+
+/** One value for every wall, or five in back/left/right/top/bottom order. */
+function parseWallReflect(s: string | null): Scene['wallReflect'] | null {
+  if (!s) return null;
+  const v = s.trim().split(/[\s,]+/).map(parseFloat);
+  if (!v.every(Number.isFinite)) return null;
+  if (v.length === 1) return { back: v[0], left: v[0], right: v[0], top: v[0], bottom: v[0] };
+  if (v.length === 5) return { back: v[0], left: v[1], right: v[2], top: v[3], bottom: v[4] };
+  return null;
+}
+
+/** Write one scene attribute into the scene; a missing or invalid value
+ * restores that field's default. */
+function applySceneAttr(el: Element, scene: Scene, name: SceneAttr) {
+  const d = SCENE_DEFAULTS();
+  switch (name) {
+    case 'camera-z': scene.cameraZ = numAttr(el, name, d.cameraZ); break;
+    case 'fov': scene.fov = numAttr(el, name, d.fov); break;
+    case 'sphere-radius': scene.sphereRadius = numAttr(el, name, d.sphereRadius); break;
+    case 'sphere-hex': scene.sphereHex = hexAttr(el, name, d.sphereHex); break;
+    case 'wall-hex': scene.wallHex = hexAttr(el, name, d.wallHex); break;
+    case 'indirect': scene.indirect = numAttr(el, name, d.indirect); break;
+    case 'area-quality': scene.areaQuality = numAttr(el, name, d.areaQuality); break;
+    case 'wall-reflect': scene.wallReflect = parseWallReflect(el.getAttribute(name)) ?? d.wallReflect; break;
+  }
+}
+
+const SAMPLE_MODES = new Set(['points', 'line', 'circle']);
+const parseMode = (v: string | null): SampleMode => (v && SAMPLE_MODES.has(v) ? v : 'circle') as SampleMode;
 
 const DEFAULT_LIGHTS = (): Light[] => [
   { type: 'directional', yaw: -150, pitch: 48, dist: 2, hex: '#ff0000', intensity: 0.95, angle: 30, size: 0.15 },
@@ -122,7 +163,7 @@ const DEFAULT_LIGHTS = (): Light[] => [
 ];
 
 export class RayColorViewElement extends ElementBase {
-  static observedAttributes = ['mode', 'count', 'spacing', 'controls', ...SCENE_ATTRS];
+  static observedAttributes = ['mode', 'count', 'spacing', 'controls', 'renderer', ...SCENE_ATTRS];
 
   private core: ViewCore | null = null;
   private childObserver: MutationObserver | null = null;
@@ -150,19 +191,11 @@ export class RayColorViewElement extends ElementBase {
     this.saved = null;
     const pending = this.pending;
     this.pending = {};
-    const scene: Scene = saved?.scene ?? {
-      cameraZ: numAttr(this, 'camera-z', -9.3),
-      fov: numAttr(this, 'fov', 30),
-      sphereRadius: numAttr(this, 'sphere-radius', 1.2),
-      sphereHex: hexAttr(this, 'sphere-hex', '#ffffff'),
-      wallHex: hexAttr(this, 'wall-hex', '#999999'),
-      indirect: numAttr(this, 'indirect', 0.3),
-      areaQuality: numAttr(this, 'area-quality', 6),
-      wallReflect: (() => {
-        const r = numAttr(this, 'wall-reflect', 0);
-        return { back: r, left: r, right: r, top: r, bottom: r };
-      })(),
-    };
+    let scene = saved?.scene;
+    if (!scene) {
+      scene = SCENE_DEFAULTS();
+      for (const name of SCENE_ATTRS) applySceneAttr(this, scene, name);
+    }
 
     // declarative children stay the source of truth; without them, a
     // reconnect resumes the lights it had
@@ -177,7 +210,7 @@ export class RayColorViewElement extends ElementBase {
       lights,
       glFactory: renderer === 'software' ? null : registeredGlFactory,
       controls: this.hasAttribute('controls'),
-      mode: (this.getAttribute('mode') as SampleMode) || 'circle',
+      mode: parseMode(this.getAttribute('mode')),
       count: numAttr(this, 'count', 7),
       spacing: (this.getAttribute('spacing') as SpacingName) || 'linear',
     });
@@ -237,23 +270,13 @@ export class RayColorViewElement extends ElementBase {
   attributeChangedCallback(name: string, _old: string | null, value: string | null) {
     if (!this.core || this.applyingAttrs) return;
     const core = this.core;
-    if (name === 'mode') core.mode = (value as SampleMode) || 'circle';
+    if (name === 'mode') core.mode = parseMode(value);
     else if (name === 'count') core.count = numAttr(this, 'count', core.count);
     else if (name === 'spacing') core.spacing = (value as SpacingName) || 'linear';
     else if (name === 'controls') core.controls = value !== null;
+    else if (name === 'renderer') this.rebuild(core.lights);
     else if ((SCENE_ATTRS as readonly string[]).includes(name)) {
-      const s = core.scene;
-      s.cameraZ = numAttr(this, 'camera-z', s.cameraZ);
-      s.fov = numAttr(this, 'fov', s.fov);
-      s.sphereRadius = numAttr(this, 'sphere-radius', s.sphereRadius);
-      s.sphereHex = hexAttr(this, 'sphere-hex', s.sphereHex);
-      s.wallHex = hexAttr(this, 'wall-hex', s.wallHex);
-      s.indirect = numAttr(this, 'indirect', s.indirect);
-      s.areaQuality = numAttr(this, 'area-quality', s.areaQuality);
-      if (this.hasAttribute('wall-reflect')) {
-        const r = numAttr(this, 'wall-reflect', 0);
-        s.wallReflect = { back: r, left: r, right: r, top: r, bottom: r };
-      }
+      applySceneAttr(this, core.scene, name as SceneAttr);
       core.update();
     }
   }
