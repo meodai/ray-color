@@ -92,14 +92,14 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Blue hour',
-    scene: { ...baseScene(), indirect: 1, wallHex: '#4488cc', sphereHex: '#ffddaa' },
+    scene: { ...baseScene(), indirect: 1, wallHex: '#4488cc', sphereHex: '#ffddaa', bloom: { strength: 1.2, threshold: 0 } },
     lights: [
       light({ type: 'spot', yaw: 60, pitch: 50, dist: 3, hex: '#ffffff', intensity: 5, angle: 35 }),
       light({ type: 'area', yaw: -60, pitch: -45, dist: 2.4, hex: '#ff2200', intensity: 1.8, size: 0.9 }),
       light({ type: 'point', yaw: 170, pitch: 0, dist: 2.2, hex: '#22ff66', intensity: 0.4 }),
     ],
     // Top rim (white spot) down to the red area pole: tan-oxblood-vermilion
-    shape: { kind: 'line', a: unit(0.454, 0.891, -0.1), b: unit(0.354, -0.707, -0.612), count: 7, spacing: 'smoothstep' },
+    shape: { kind: 'line', a: unit(0.452, 0.887, -0.1), b: unit(0.639, -0.486, -0.597), count: 7, spacing: 'smoothstep' },
   },
   {
     name: 'Full house',
