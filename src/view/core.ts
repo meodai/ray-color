@@ -16,6 +16,7 @@ import {
   circleDir,
   circleBasis,
   rotateDirs,
+  rotateAboutAxis,
   sampleLineDirs,
   sampleCircleDirs,
   distributions,
@@ -186,6 +187,8 @@ export class ViewCore {
     this.viewport.className = 'viewport';
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'render-canvas';
+    this.canvas.setAttribute('role', 'img');
+    this.canvas.setAttribute('aria-label', 'Raytraced sphere lit by colored lights');
     this.gizmoSvg = document.createElementNS(NS, 'svg') as SVGSVGElement;
     this.gizmoSvg.setAttribute('class', 'gizmo');
     this.gizmoSvg.setAttribute('aria-hidden', 'true');
@@ -565,6 +568,8 @@ export class ViewCore {
   // ---------------------------------------------------------------- light markers + gizmo
 
   private updateLightMarkers() {
+    // the layer is rebuilt from scratch; keyboard focus has to survive that
+    const focusKey = this.focusedKey();
     this.lightLayer.innerHTML = '';
     for (let i = 0; i < this.lights.length; i++) {
       const screenPos = this._engine.worldToScreen(this.lightPositions[i * 3], this.lightPositions[i * 3 + 1], this.lightPositions[i * 3 + 2]);
@@ -574,6 +579,8 @@ export class ViewCore {
       const marker = document.createElement('div');
       marker.className = `marker light-marker${this.lights[i].type === 'directional' ? ' light-marker--directional' : ''}`;
       marker.dataset.light = String(i);
+      this.makeFocusable(marker, `light-${i}`, `${this.lights[i].type} light ${i + 1} — arrow keys aim it, Enter selects`);
+      marker.setAttribute('aria-pressed', String(i === this._selectedLight));
       if (cx !== screenPos.x || cy !== screenPos.y) marker.classList.add('marker--offscreen');
       if (i === this._selectedLight) marker.classList.add('marker--selected');
       marker.style.left = `${(cx / this.canvas.width) * 100}%`;
@@ -641,6 +648,7 @@ export class ViewCore {
       }
     }
     this.updateGizmo();
+    this.refocus(this.lightLayer, focusKey);
   }
 
   // Circular menu riding the intensity ring: color swatch and light-type
@@ -664,6 +672,7 @@ export class ViewCore {
     };
 
     const swatch = addCtrl('light-ctrl--color', a1, 'Light color — click to pick');
+    this.makeFocusable(swatch, 'swatch', 'Light color');
     swatch.style.backgroundColor = light.hex;
     swatch.addEventListener('click', e => {
       e.stopPropagation();
@@ -1290,6 +1299,7 @@ export class ViewCore {
     const color = this._engine.shade(dir);
     const marker = document.createElement('div');
     marker.className = 'marker sample-marker';
+    this.makeFocusable(marker, '', 'Sample point — arrow keys move it, Delete removes it');
     const sample: Sample = { dir, color: new Float64Array([color.r, color.g, color.b]), marker };
     marker.addEventListener('pointerdown', e => this.beginSampleDrag(e, sample));
     this.sampleLayer.appendChild(marker);
@@ -1321,7 +1331,10 @@ export class ViewCore {
 
   private selectSample(sample: Sample | null) {
     this.selectedSample = sample;
-    this.samples.forEach(s => s.marker.classList.toggle('marker--selected', s === this.selectedSample));
+    this.samples.forEach(s => {
+      s.marker.classList.toggle('marker--selected', s === this.selectedSample);
+      s.marker.setAttribute('aria-pressed', String(s === this.selectedSample));
+    });
     this.onSampleSelect?.(sample ? this.samples.indexOf(sample) : null);
   }
 
@@ -1398,11 +1411,19 @@ export class ViewCore {
     h.className = 'marker shape-handle';
     h.dataset.handle = role;
     h.title = title;
+    const label = { a: this._shape?.kind === 'line' ? 'Line start' : 'Circle center', b: 'Line end', r: 'Circle radius', rot: 'Rotate line', crot: 'Rotate palette' }[role];
+    this.makeFocusable(h, `handle-${role}`, `${label} — arrow keys adjust, Delete removes the shape`);
     this.shapeHandles.appendChild(h);
     return h;
   }
 
   private updateShapeOverlay() {
+    const focusKey = this.focusedKey();
+    this.drawShapeOverlay();
+    this.refocus(this.shapeHandles, focusKey);
+  }
+
+  private drawShapeOverlay() {
     this.shapeSvg.setAttribute('viewBox', `0 0 ${this.canvas.width} ${this.canvas.height}`);
     this.shapeSvg.innerHTML = '';
     this.shapeHandles.innerHTML = '';
@@ -1844,12 +1865,121 @@ export class ViewCore {
       this.update();
     }, { passive: false });
 
+    this.viewport.addEventListener('keydown', e => this.onKeyDown(e));
+
     this.gizmoSvg.addEventListener('pointerdown', e => {
       if (!this._controls) return;
       const orbit = (e.target as SVGElement).dataset?.orbit as 'yaw' | 'pitch' | undefined;
       if (!orbit || this._selectedLight < 0) return;
       this.beginOrbitDrag(e, orbit);
     });
+  }
+
+  // ---------------------------------------------------------------- keyboard
+
+  private makeFocusable(el: HTMLElement, focusKey: string, label: string) {
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', label);
+    if (focusKey) el.dataset.focusKey = focusKey;
+  }
+
+  private focusedKey(): string | undefined {
+    const root = this.viewport.getRootNode() as Document | ShadowRoot;
+    const active = root.activeElement as HTMLElement | null;
+    return active && this.viewport.contains(active) ? active.dataset.focusKey : undefined;
+  }
+
+  private refocus(layer: HTMLElement, key: string | undefined) {
+    if (key) layer.querySelector<HTMLElement>(`[data-focus-key="${key}"]`)?.focus();
+  }
+
+  /** Arrow keys move a surface direction as seen from the camera: left/right
+   * spin it about the vertical axis, up/down about the horizontal one. */
+  private nudgeDir(d: Float64Array, dx: number, dy: number, rad: number) {
+    if (dx) rotateAboutAxis(d, [0, 1, 0], -dx * rad);
+    if (dy) rotateAboutAxis(d, [1, 0, 0], dy * rad);
+    const len = Math.hypot(d[0], d[1], d[2]) || 1;
+    d[0] /= len; d[1] /= len; d[2] /= len;
+  }
+
+  // Keyboard path for every pointer control: Enter/Space selects, arrows
+  // adjust (Shift for bigger steps), Delete removes, Escape deselects
+  private onKeyDown(e: KeyboardEvent) {
+    if (!this._controls) return;
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'SELECT' || t.tagName === 'INPUT') return;
+    if (e.key === 'Escape') {
+      // left to bubble: the host page may close its own panels on Escape too
+      this.selectLight(-1);
+      this.selectSample(null);
+      return;
+    }
+    const lightIdx = t.dataset.light !== undefined ? parseInt(t.dataset.light, 10) : -1;
+    const sample = this.samples.find(s => s.marker === t) ?? null;
+    const handle = t.dataset.handle as HandleRole | undefined;
+    const isSwatch = t.classList.contains('light-ctrl--color');
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (lightIdx >= 0) this.selectLight(this._selectedLight === lightIdx ? -1 : lightIdx);
+      else if (isSwatch) t.click();
+      else if (sample) this.selectSample(sample);
+      else return;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (sample) {
+        this.selectSample(sample);
+        this.deleteSelectedSample();
+      } else if (handle) {
+        this.deleteShape();
+      } else return;
+      // handled here: a page-level Backspace handler must not delete again
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    const arrow = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] } as Record<string, [number, number]>)[e.key];
+    if (!arrow) return;
+    const [dx, dy] = arrow;
+    const deg = e.shiftKey ? 15 : 3;
+    const rad = deg * Math.PI / 180;
+    if (lightIdx >= 0) {
+      const l = this.lights[lightIdx];
+      this.selectLight(lightIdx);
+      l.yaw = wrap180(l.yaw + dx * deg);
+      l.pitch = Math.max(-89, Math.min(89, l.pitch + dy * deg));
+      this.onInput?.('light');
+      this.update();
+      this.onChange?.('light');
+    } else if (sample) {
+      this.selectSample(sample);
+      this.nudgeDir(sample.dir, dx, dy, rad);
+      const color = this._engine.shade(sample.dir);
+      sample.color[0] = color.r;
+      sample.color[1] = color.g;
+      sample.color[2] = color.b;
+      this.updateSampleMarker(sample);
+      this.updateSamplesRotWidget();
+      this.onInput?.('sample');
+      this.emitPalette();
+      this.onChange?.('sample');
+    } else if (handle && this._shape) {
+      const shape = this._shape;
+      const amount = dx + dy; // right/up grow, left/down shrink
+      if (handle === 'a' || handle === 'b') this.nudgeDir(handle === 'a' ? shape.a : shape.b, dx, dy, rad);
+      else if (handle === 'r') shape.rho = Math.max(0.02, Math.min(Math.PI - 0.02, shape.rho + amount * rad));
+      else if (handle === 'crot') shape.rotate = wrap180(shape.rotate + amount * deg);
+      else rotateDirs([shape.a, shape.b], amount * deg, slerp(shape.a, shape.b, 0.5));
+      this.recomputeShapeColors();
+      this.updateShapeOverlay();
+      this.onInput?.('shape');
+      this.emitPalette();
+      this.onChange?.('shape');
+    } else return;
+    e.preventDefault();
   }
 
   /** Shared drag plumbing: window-level move/up, change emitted on release.

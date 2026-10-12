@@ -416,6 +416,12 @@ export const VIEW_STYLES = `
     0 0 0 5px rgba(255, 255, 255, 0.35);
 }
 
+.marker:focus-visible,
+.light-ctrl:focus-visible {
+  outline: 2px solid var(--rcv-stroke);
+  outline-offset: 3px;
+}
+
 /* .marker's blanket pointer-events: none is written after .shape-handle's
    auto and was silently winning — restate it here, after the base rule */
 .marker.shape-handle {
