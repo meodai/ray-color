@@ -46,6 +46,9 @@ export interface Scene {
   sphereHex: string;
   wallHex: string;
   indirect: number;    // 0..1
+  /** Close the room's open, camera-facing side for bounce light: a wall
+   * there lights points facing the camera too. Never rendered. Default false. */
+  frontWall?: boolean;
   areaQuality: number; // shadow samples per area light
   /** Per-wall mirror reflectivity, 0 (matte) .. 1 (full mirror). Reflective
    * walls mirror the sphere/room visually AND act as virtual light sources:
@@ -91,6 +94,8 @@ export const DEFAULT_PASS_SCALES = [4, 2, 1];
  * palette sampling via shade() is resolution-independent anyway. */
 export const DEFAULT_ENGINE_SIZE = 400;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const INDIRECT_SAMPLES = 64;
+const BOUNCE_LIGHT_RADIUS = 0.5;
 /** Bloom is computed on a fixed grid this many rows tall, whatever the canvas
  * size, which keeps glowing palettes resolution independent. */
 export const GLOW_ROWS = 128;
@@ -615,13 +620,33 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     return s;
   }
 
+  // The room is open toward the camera. Bounce light closes it with a front
+  // wall at z = -2, or points facing the camera would see no wall at all.
+  const frontWallScratch = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, t: 0 };
+  function bounceWallHit(originX: number, originY: number, originZ: number, dirX: number, dirY: number, dirZ: number) {
+    const hit = intersectRoom(originX, originY, originZ, dirX, dirY, dirZ);
+    if (hit || dirZ >= 0 || !scene.frontWall) return hit;
+    const t = (-2 - originZ) / dirZ;
+    const s = frontWallScratch;
+    s.x = originX + dirX * t;
+    s.y = originY + dirY * t;
+    s.z = -2;
+    s.t = t;
+    return s;
+  }
+
   // ---------------------------------------------------------------- shading
 
-  const indirectDirs = [
-    { x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 },
-    { x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 },
-    { x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 },
-  ];
+  // Bounce directions around the normal, cosine-weighted: a golden-angle
+  // spiral on the unit disk lifted onto the hemisphere, so directions near the
+  // normal are denser and a plain average is the cosine-weighted bounce. Fixed
+  // pattern, no RNG; the GPU preview builds the same one.
+  const indirectLocal: number[][] = [];
+  for (let k = 0; k < INDIRECT_SAMPLES; k++) {
+    const r = Math.sqrt((k + 0.5) / INDIRECT_SAMPLES);
+    const phi = k * GOLDEN_ANGLE;
+    indirectLocal.push([r * Math.cos(phi), r * Math.sin(phi), Math.sqrt(1 - r * r)]);
+  }
 
   // Reflective walls as virtual light sources: each light mirrored across a
   // reflective wall plane illuminates diffuse surfaces, tinted by the wall
@@ -804,11 +829,18 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
 
     if (enableIndirect && scene.indirect > 0) {
       let indirectR = 0, indirectG = 0, indirectB = 0;
-      for (let s = 0; s < indirectDirs.length; s++) {
-        const dir = indirectDirs[s];
-        const dot = normalX * dir.x + normalY * dir.y + normalZ * dir.z;
-        if (dot <= 0) continue;
-        const wallHit = intersectRoom(hitX + normalX * 0.001, hitY + normalY * 0.001, hitZ + normalZ * 0.001, dir.x, dir.y, dir.z);
+      // Tangent frame around the normal, turning with it continuously except
+      // at the poles (n = ±y), which sit on the silhouette from the camera
+      let tx = -normalZ, tz = normalX;
+      const tl = Math.sqrt(tx * tx + tz * tz);
+      if (tl < 1e-6) { tx = 1; tz = 0; } else { tx /= tl; tz /= tl; }
+      const bx = normalY * tz, by = normalZ * tx - normalX * tz, bz = -normalY * tx;
+      for (let s = 0; s < INDIRECT_SAMPLES; s++) {
+        const l = indirectLocal[s];
+        const ix = tx * l[0] + bx * l[1] + normalX * l[2];
+        const iy = by * l[1] + normalY * l[2];
+        const iz = tz * l[0] + bz * l[1] + normalZ * l[2];
+        const wallHit = bounceWallHit(hitX + normalX * 0.001, hitY + normalY * 0.001, hitZ + normalZ * 0.001, ix, iy, iz);
         if (wallHit) {
           let wallLightR = 0, wallLightG = 0, wallLightB = 0;
           for (let i = 0; i < lightCount; i++) {
@@ -824,8 +856,10 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
               const wlLen = Math.sqrt(wlX * wlX + wlY * wlY + wlZ * wlZ);
               if (wlLen > 0) {
                 const inv = 1 / wlLen;
-                // Same inverse-square attenuation as the direct pass
-                wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * inv) / Math.max(0.01, wlLen * wlLen);
+                // Inverse square, softened as if the light were BOUNCE_LIGHT_RADIUS
+                // wide: a bare 1/d² makes a light near a wall a tiny, blinding
+                // patch that the fixed bounce directions pick out as blotches
+                wallDiffuse = Math.max(0, (wallHit.nx * wlX + wallHit.ny * wlY + wallHit.nz * wlZ) * inv) / (wlLen * wlLen + BOUNCE_LIGHT_RADIUS * BOUNCE_LIGHT_RADIUS);
                 if (type === 'spot') {
                   // Respect the cone: bounce only where the spot actually shines
                   const LdotAxis = -((wlX * inv) * spotAxes[i][0] + (wlY * inv) * spotAxes[i][1] + (wlZ * inv) * spotAxes[i][2]);
@@ -844,13 +878,13 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
             wallLightB += lightColors[i * 3 + 2] * wallDiffuse * lightIntensities[i];
           }
           const dx = wallHit.x - hitX, dy = wallHit.y - hitY, dz = wallHit.z - hitZ;
-          const attenuation = dot / (1 + Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
+          const attenuation = 1 / (1 + Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
           indirectR += wallColor[0] * wallLightR * attenuation;
           indirectG += wallColor[1] * wallLightG * attenuation;
           indirectB += wallColor[2] * wallLightB * attenuation;
         }
       }
-      const indirectScale = scene.indirect / indirectDirs.length;
+      const indirectScale = scene.indirect / INDIRECT_SAMPLES;
       colorR += indirectR * indirectScale;
       colorG += indirectG * indirectScale;
       colorB += indirectB * indirectScale;

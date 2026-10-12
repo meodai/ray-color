@@ -36,7 +36,7 @@ test('rendering is deterministic and matches the reference frame', () => {
   const b = render(createEngine(W, H, makeScene(), makeLights()));
   assert.equal(sha1(a), sha1(b));
   // update deliberately when the shading model changes on purpose
-  assert.equal(sha1(a), 'e5b122dfafd8720e124467ccdeab60055747cb7e');
+  assert.equal(sha1(a), '0dba1dd7ae4236b633cbdc21305bce6366ed2e4d');
 });
 
 test('a sampled color matches its rendered pixel bit for bit', () => {

@@ -174,6 +174,13 @@ starts, default 0.8). The same settings are `view.bloom` and
 `view.bloomThreshold`. The glow is part of the picture, so it is part of the
 palette too: see [Bloom](#bloom-1) in the library section.
 
+> [!WARNING]
+> With bloom on, the palette depends on the camera. Every other setting
+> describes the scene, so moving the camera or changing the fov never changes
+> a sampled color. Bloom imitates a camera lens: the glow spreads across the
+> image, not the scene, so dollying, zooming or changing the view's aspect
+> ratio does.
+
 The component never captures page scroll: the camera distance is set with
 the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
 scroll-to-dolly is the embedding page's decision — a `wheel` listener on the
@@ -199,6 +206,15 @@ ray-color-view {
 `--bg` / `--text` flow in the same way for the handle chrome and canvas
 frame.
 
+### Bounce light
+
+`scene.indirect` (0 … 1) adds light bouncing off the walls onto the sphere,
+tinted by the wall color, so shadows pick up the room instead of going black.
+The room is open on the camera's side, so by default nothing bounces from
+there; `scene.frontWall = true` closes it for bounce light only (it is never
+drawn), which gives points facing the camera a fill when lights shine on that
+side's wall from inside the room.
+
 ### Mirror walls
 
 `scene.wallReflect` sets per-wall reflectivity (0 matte … 1 mirror). On
@@ -220,10 +236,17 @@ The engine computes the glow itself, in f64 on a fixed grid (`GLOW_ROWS`
 rows, columns by aspect ratio): it thresholds the unclipped image, so
 lights brighter than white glow harder, and blurs it at five octaves starting
 at `radius` (a fraction of the view height, default 0.02). Palettes stay
-deterministic and independent of canvas size. Being a lens effect, the glow
-does depend on the camera (`cameraZ`, `fov`, aspect ratio), and points hidden
-on the back of the sphere get none. `engine.glow()` returns the glow image for
-renderers that want to add the same glow, like the WebGL preview does.
+deterministic and independent of canvas size. `engine.glow()` returns the glow
+image for renderers that want to add the same glow, like the WebGL preview does.
+
+> [!WARNING]
+> Bloom is the only setting that makes colors depend on the camera. Without
+> it, `shade(dir)` is a function of the scene alone: `cameraZ`, `fov` and the
+> aspect ratio only frame the picture. Bloom imitates a lens, so it is
+> computed in screen space: changing any of them changes the palette, and
+> points hidden on the back of the sphere get no glow at all. Keep the camera fixed while tuning a
+> bloomed palette, or turn bloom off when the palette has to be independent of
+> how the scene is framed.
 
 ### Guarantees
 

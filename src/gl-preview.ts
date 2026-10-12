@@ -43,6 +43,7 @@ uniform float uSphereRadius;
 uniform vec3 uSphereColor;
 uniform vec3 uWallColor;
 uniform float uIndirect;
+uniform bool uFrontWall;
 uniform int uAreaSamples;          // resolved per-frame: clamp(areaQuality, 1, MAS)
 uniform float uWallReflect[5];     // back, left, right, top, bottom
 uniform int uLightCount;
@@ -65,11 +66,8 @@ out vec4 fragColor;
 const int WALL_AXIS[5] = int[5](2, 0, 0, 1, 1);
 const float WALL_S[5] = float[5](2.0, -2.0, 2.0, 2.0, -2.0);
 
-const vec3 INDIRECT_DIRS[6] = vec3[6](
-  vec3(1, 0, 0), vec3(-1, 0, 0),
-  vec3(0, 1, 0), vec3(0, -1, 0),
-  vec3(0, 0, 1), vec3(0, 0, -1)
-);
+// The engine's cosine-weighted bounce pattern
+const int INDIRECT_SAMPLES = 64;
 
 // d must be unit length (all callers normalize). The discriminant uses the
 // perpendicular-distance form: the CPU's b*b - 4*a*c is fine in f64 but
@@ -257,13 +255,23 @@ vec3 calcLighting(vec3 hit, vec3 n, vec3 objColor, bool enableIndirect) {
 
   if (enableIndirect && uIndirect > 0.0) {
     vec3 indirect = vec3(0.0);
-    for (int s = 0; s < 6; s++) {
-      vec3 dir = INDIRECT_DIRS[s];
-      float d = dot(n, dir);
-      if (d <= 0.0) continue;
+    vec3 t = vec3(-n.z, 0.0, n.x);
+    float tl = length(t);
+    t = tl < 1e-6 ? vec3(1.0, 0.0, 0.0) : t / tl;
+    vec3 bt = cross(n, t);
+    for (int s = 0; s < INDIRECT_SAMPLES; s++) {
+      float r = sqrt((float(s) + 0.5) / float(INDIRECT_SAMPLES));
+      float phi = float(s) * GOLDEN_ANGLE;
+      vec3 dir = t * (r * cos(phi)) + bt * (r * sin(phi)) + n * sqrt(1.0 - r * r);
       vec3 wPos, wN;
       int wallId;
-      if (!roomHit(hit + n * 0.001, dir, wPos, wN, wallId)) continue;
+      vec3 o = hit + n * 0.001;
+      if (!roomHit(o, dir, wPos, wN, wallId)) {
+        // the engine's bounceWallHit(): a front wall closes the open side
+        if (dir.z >= 0.0 || !uFrontWall) continue;
+        wPos = o + dir * ((-BOUNDS - o.z) / dir.z);
+        wN = vec3(0.0, 0.0, 1.0);
+      }
       vec3 wallLight = vec3(0.0);
       for (int i = 0; i < ML; i++) {
         if (i >= uLightCount) break;
@@ -276,7 +284,8 @@ vec3 calcLighting(vec3 hit, vec3 n, vec3 objColor, bool enableIndirect) {
           float wlLen = length(wl);
           if (wlLen > 0.0) {
             float inv = 1.0 / wlLen;
-            wallDiffuse = max(0.0, dot(wN, wl) * inv) / max(0.01, wlLen * wlLen);
+            // the engine's softened falloff, BOUNCE_LIGHT_RADIUS = 0.5
+            wallDiffuse = max(0.0, dot(wN, wl) * inv) / (wlLen * wlLen + 0.25);
             if (uLightType[i] == 3) {
               // Respect the cone: bounce only where the spot actually shines
               float LdotAxis = -dot(wl * inv, uSpotAxis[i]);
@@ -292,10 +301,10 @@ vec3 calcLighting(vec3 hit, vec3 n, vec3 objColor, bool enableIndirect) {
         }
         wallLight += uLightColor[i] * wallDiffuse * uLightIntensity[i];
       }
-      float attenuation = d / (1.0 + length(wPos - hit) * 0.5);
+      float attenuation = 1.0 / (1.0 + length(wPos - hit) * 0.5);
       indirect += uWallColor * wallLight * attenuation;
     }
-    color += indirect * (uIndirect / 6.0);
+    color += indirect * (uIndirect / float(INDIRECT_SAMPLES));
   }
   return color * objColor;
 }
@@ -444,6 +453,7 @@ export function createGlPreview(
   const uSphereColor = loc('uSphereColor');
   const uWallColor = loc('uWallColor');
   const uIndirect = loc('uIndirect');
+  const uFrontWall = loc('uFrontWall');
   const uAreaSamples = loc('uAreaSamples');
   const uWallReflect = loc('uWallReflect[0]');
   const uLightCount = loc('uLightCount');
@@ -543,6 +553,7 @@ export function createGlPreview(
     gl!.uniform1f(uAspectTanFov, (canvas.width / canvas.height) * tanFov);
     gl!.uniform1f(uSphereRadius, scene.sphereRadius);
     gl!.uniform1f(uIndirect, scene.indirect);
+    gl!.uniform1i(uFrontWall, scene.frontWall ? 1 : 0);
     gl!.uniform1i(uAreaSamples, Math.max(1, Math.min(MAX_AREA_SAMPLES, scene.areaQuality)));
     gl!.uniform1fv(uWallReflect, wallReflect);
     gl!.uniform1i(uLightCount, count);
