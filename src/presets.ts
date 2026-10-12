@@ -4,7 +4,7 @@
 //
 // Apply with copies (structuredClone) — the engine mutates scene and lights.
 
-import type { Scene, Light } from './engine';
+import type { Scene, Light } from './engine.js';
 
 /** Sampling shape shipped with a preset, chosen so the palette it produces
  * reads well immediately. Directions are unit vectors on the sphere; lines

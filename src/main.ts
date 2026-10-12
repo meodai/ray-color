@@ -4,17 +4,17 @@
 // panel, exports and sound, wired through the component's events and API.
 
 import { SourceSession, createCollection } from 'token-beam';
-import { SoundManager } from './sound';
+import { SoundManager } from './sound.js';
 import {
   toSRGB8,
   srgbToLinear,
   MAX_LIGHT_DISTANCE,
   type Light,
-} from './engine';
-import './view'; // registers <ray-color-view> before the element below upgrades
-import { LIGHT_TYPE_ICONS } from './view';
-import type { RayColorViewElement, SampleMode, SpacingName, InputKind } from './view';
-import { PRESETS } from './presets';
+} from './engine.js';
+import './view.js'; // registers <ray-color-view> before the element below upgrades
+import { LIGHT_TYPE_ICONS } from './view.js';
+import type { RayColorViewElement, SampleMode, SpacingName, InputKind } from './view.js';
+import { PRESETS } from './presets.js';
 
 const sound = new SoundManager();
 window.addEventListener('pointerdown', () => sound.unlock(), { capture: true });

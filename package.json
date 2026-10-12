@@ -8,9 +8,14 @@
   "types": "./lib/engine.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/engine.d.ts",
-      "import": "./lib/ray-color.js",
-      "require": "./lib/ray-color.cjs"
+      "import": {
+        "types": "./lib/engine.d.ts",
+        "default": "./lib/ray-color.js"
+      },
+      "require": {
+        "types": "./lib/engine.d.cts",
+        "default": "./lib/ray-color.cjs"
+      }
     },
     "./view": {
       "types": "./lib/view.d.ts",
@@ -39,7 +44,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && cp lib/engine.d.ts lib/engine.d.cts",
     "preview": "vite preview",
     "prepublishOnly": "npm run build:lib"
   },

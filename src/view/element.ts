@@ -11,10 +11,10 @@
 // a range input's change). `input` fires continuously while dragging,
 // `change` once on release, `palettechange` whenever the sampled colors move.
 
-import type { Light, Scene, RGB } from '../engine';
-import { toSRGB8, isHexColor } from '../engine';
-import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core';
-import { VIEW_STYLES } from './styles';
+import type { Light, Scene, RGB } from '../engine.js';
+import { toSRGB8, isHexColor } from '../engine.js';
+import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core.js';
+import { VIEW_STYLES } from './styles.js';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
 const vec3 = (v: ArrayLike<number>) => `${fmt(v[0])} ${fmt(v[1])} ${fmt(v[2])}`;

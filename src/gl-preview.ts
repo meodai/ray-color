@@ -12,7 +12,7 @@
 import {
   type Scene, type Light,
   hexToRgb, positionToAngles, MAX_LIGHT_DISTANCE,
-} from './engine';
+} from './engine.js';
 
 const MAX_LIGHTS = 4;
 const MAX_AREA_SAMPLES = 32;

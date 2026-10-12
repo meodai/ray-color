@@ -23,9 +23,9 @@ import {
   type Engine,
   type Light,
   type Scene,
-} from '../engine';
-import type { GlPreview } from '../gl-preview';
-import { LIGHT_TYPE_ICONS } from './icons';
+} from '../engine.js';
+import type { GlPreview } from '../gl-preview.js';
+import { LIGHT_TYPE_ICONS } from './icons.js';
 
 export type SampleMode = 'points' | 'line' | 'circle';
 export type SpacingName = keyof typeof distributions;
