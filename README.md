@@ -145,7 +145,11 @@ import 'ray-color/view/software';  // CPU only — no shader code in the bundle
 
 The children are two-way: edit an attribute (in devtools, or via a framework
 binding) and the scene follows; drag the on-screen controls and the
-attributes update on release — `outerHTML` is always a reproducible scene.
+attributes update on release, and scene edits made through `view.scene`
+are written back to the scene attributes, so `outerHTML` reproduces the
+lights, the shape and the scene. The loose samples of `mode="points"` are
+not part of the markup: read them with `view.sampleDirs()` and restore them
+with `view.setSampleDirs(dirs)`.
 `input` fires continuously while dragging, `change` once per gesture,
 `palettechange` whenever the sampled colors move (`e.detail.colors` is
 `[{ hex, rgb }]`). Without children it boots with a default scene; properties

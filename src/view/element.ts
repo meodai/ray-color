@@ -17,12 +17,18 @@ import { ViewCore, type GlFactory, type InputKind, type SampleMode, type Spacing
 import { VIEW_STYLES } from './styles.js';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
-const vec3 = (v: ArrayLike<number>) => `${fmt(v[0])} ${fmt(v[1])} ${fmt(v[2])}`;
+// shape anchors get more digits: 3 decimals moved them by up to ~1e-3 rad,
+// enough to shift sampled colors after a round trip through the markup
+const fmtDir = (n: number) => String(Math.round(n * 1e6) / 1e6);
+const vec3 = (v: ArrayLike<number>) => `${fmtDir(v[0])} ${fmtDir(v[1])} ${fmtDir(v[2])}`;
 
-function parseVec3(s: string | null): [number, number, number] | null {
+/** Three numbers, normalized: shape anchors are unit directions. */
+function parseDir(s: string | null): [number, number, number] | null {
   if (!s) return null;
-  const parts = s.trim().split(/[\s,]+/).map(parseFloat);
-  return parts.length === 3 && parts.every(Number.isFinite) ? [parts[0], parts[1], parts[2]] : null;
+  const p = s.trim().split(/[\s,]+/).map(parseFloat);
+  if (p.length !== 3 || !p.every(Number.isFinite)) return null;
+  const len = Math.hypot(p[0], p[1], p[2]);
+  return len > 0 ? [p[0] / len, p[1] / len, p[2] / len] : null;
 }
 
 function numAttr(el: Element, name: string, fallback: number) {
@@ -75,12 +81,12 @@ export class RayColorShapeElement extends ElementBase {
   toShape(): ShapeInit | null {
     const kind = this.getAttribute('kind');
     if (kind !== 'line' && kind !== 'circle') return null;
-    const a = parseVec3(this.getAttribute('a'));
+    const a = parseDir(this.getAttribute('a'));
     if (!a) return null;
     return {
       kind,
       a,
-      b: parseVec3(this.getAttribute('b')) ?? a,
+      b: parseDir(this.getAttribute('b')) ?? a,
       rho: numAttr(this, 'rho', 0),
       rotate: numAttr(this, 'rotate', 0),
     };
@@ -151,6 +157,21 @@ function applySceneAttr(el: Element, scene: Scene, name: SceneAttr) {
     case 'area-quality': scene.areaQuality = numAttr(el, name, d.areaQuality); break;
     case 'wall-reflect': scene.wallReflect = parseWallReflect(el.getAttribute(name)) ?? d.wallReflect; break;
   }
+}
+
+function sceneAttrValues(sc: Scene): Record<SceneAttr, string> {
+  const w = sc.wallReflect;
+  const walls = [w.back, w.left, w.right, w.top, w.bottom];
+  return {
+    'fov': fmt(sc.fov),
+    'camera-z': fmt(sc.cameraZ),
+    'sphere-radius': fmt(sc.sphereRadius),
+    'sphere-hex': sc.sphereHex,
+    'wall-hex': sc.wallHex,
+    'indirect': fmt(sc.indirect),
+    'area-quality': fmt(sc.areaQuality),
+    'wall-reflect': walls.every(v => v === walls[0]) ? fmt(walls[0]) : walls.map(fmt).join(' '),
+  };
 }
 
 const SAMPLE_MODES = new Set(['points', 'line', 'circle']);
@@ -387,6 +408,23 @@ export class RayColorViewElement extends ElementBase {
     }
     Object.assign(this.core.scene, s);
     this.core.update();
+    this.reflectScene();
+  }
+
+  /** scene → attributes, so outerHTML carries scene edits made in code. */
+  private reflectScene() {
+    const values = sceneAttrValues(this.core!.scene);
+    const defaults = sceneAttrValues(SCENE_DEFAULTS());
+    this.applyingAttrs = true;
+    try {
+      for (const name of SCENE_ATTRS) {
+        // leave defaults implicit unless the markup already spells them out
+        if (values[name] === defaults[name] && !this.hasAttribute(name)) continue;
+        this.setAttribute(name, values[name]);
+      }
+    } finally {
+      this.applyingAttrs = false;
+    }
   }
   get lights(): Light[] { return this.core?.lights ?? []; }
   get mode(): SampleMode { return this.core?.mode ?? 'circle'; }
