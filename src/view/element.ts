@@ -110,6 +110,8 @@ export class RayColorViewElement extends HTMLElement {
   private applyingAttrs = false;
   // live state kept across a disconnect, so re-inserting the element resumes
   // where it left off instead of rebuilding from attributes
+  // property writes that arrive before there's a core to apply them to
+  private pending: { scene?: Partial<Scene>; shape?: ShapeInit | null; dirs?: ArrayLike<number>[] } = {};
   private saved: { scene: Scene; lights: Light[]; shape: SurfaceShape | null; dirs: Float64Array[] | null } | null = null;
 
   constructor(glFactory: GlFactory | null = null) {
@@ -129,8 +131,11 @@ export class RayColorViewElement extends HTMLElement {
       shadow.appendChild(style);
     }
 
+    this.upgradeProperties();
     const saved = this.saved;
     this.saved = null;
+    const pending = this.pending;
+    this.pending = {};
     const scene: Scene = saved?.scene ?? {
       cameraZ: numAttr(this, 'camera-z', -9.3),
       fov: numAttr(this, 'fov', 30),
@@ -147,6 +152,8 @@ export class RayColorViewElement extends HTMLElement {
 
     // declarative children stay the source of truth; without them, a
     // reconnect resumes the lights it had
+    if (pending.scene) Object.assign(scene, pending.scene);
+
     const lightEls = this.lightChildren();
     const lights = lightEls.length ? lightEls.map(el => el.toLight()) : saved?.lights ?? DEFAULT_LIGHTS();
 
@@ -163,9 +170,11 @@ export class RayColorViewElement extends HTMLElement {
     this.core = core;
 
     const shapeInit = this.shapeChild()?.toShape();
-    if (shapeInit) core.shape = shapeInit;
+    if (pending.shape !== undefined) core.shape = pending.shape;
+    else if (shapeInit) core.shape = shapeInit;
     else if (saved?.shape) core.shape = saved.shape;
-    if (saved?.dirs) core.setSampleDirs(saved.dirs);
+    const dirs = pending.dirs ?? saved?.dirs;
+    if (dirs) core.setSampleDirs(dirs);
 
     this.connectCoreEvents();
 
@@ -178,6 +187,18 @@ export class RayColorViewElement extends HTMLElement {
     this.childObserver.observe(this, { subtree: true, childList: true, attributes: true });
 
     this.emit('palettechange', { colors: this.colors() });
+  }
+
+  /** A framework (or plain script) may set properties on the element before
+   * the class is defined; those land as own fields shadowing the accessors.
+   * Re-run them through the setters. */
+  private upgradeProperties() {
+    for (const prop of ['scene', 'shape', 'mode', 'count', 'spacing'] as const) {
+      if (!Object.prototype.hasOwnProperty.call(this, prop)) continue;
+      const value = (this as Record<string, unknown>)[prop];
+      delete (this as Record<string, unknown>)[prop];
+      (this as Record<string, unknown>)[prop] = value;
+    }
   }
 
   disconnectedCallback() {
@@ -322,7 +343,11 @@ export class RayColorViewElement extends HTMLElement {
   get canvas() { return this.core?.canvas ?? null; }
   get scene(): Scene | null { return this.core?.scene ?? null; }
   set scene(s: Partial<Scene> | null) {
-    if (!this.core || !s) return;
+    if (!s) return;
+    if (!this.core) {
+      this.pending.scene = { ...this.pending.scene, ...s };
+      return;
+    }
     Object.assign(this.core.scene, s);
     this.core.update();
   }
@@ -345,6 +370,7 @@ export class RayColorViewElement extends HTMLElement {
   get shape(): SurfaceShape | null { return this.core?.shape ?? null; }
   set shape(s: ShapeInit | null) {
     if (this.core) this.core.shape = s;
+    else this.pending.shape = s;
   }
   get selectedLight() { return this.core?.selectedLight ?? -1; }
 
@@ -367,7 +393,10 @@ export class RayColorViewElement extends HTMLElement {
   /** Raw linear-RGB triples, full precision (same buffers the engine wrote). */
   rawColors(): ArrayLike<number>[] { return this.core?.colors() ?? []; }
   sampleDirs(): Float64Array[] { return this.core?.sampleDirs() ?? []; }
-  setSampleDirs(dirs: ArrayLike<number>[]) { this.core?.setSampleDirs(dirs); }
+  setSampleDirs(dirs: ArrayLike<number>[]) {
+    if (this.core) this.core.setSampleDirs(dirs);
+    else this.pending.dirs = dirs;
+  }
   shade(dir: ArrayLike<number>): RGB | null { return this.core ? this.core.engine.shade(dir) : null; }
 
   update() { this.core?.update(); }
