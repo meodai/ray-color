@@ -236,13 +236,19 @@ export class ViewCore {
     this.colorInput.className = 'light-color-input';
     this.colorInput.tabIndex = -1;
     this.viewport.appendChild(this.colorInput);
-    this.colorInput.addEventListener('input', () => {
+    // native input events are composed: they would escape the shadow root and
+    // reach the host's listeners without the detail our own input events carry
+    this.colorInput.addEventListener('input', e => {
+      e.stopPropagation();
       if (this.colorLight < 0) return;
       this.lights[this.colorLight].hex = this.colorInput.value;
       this.onInput?.('light-color');
       this.update();
     });
-    this.colorInput.addEventListener('change', () => this.onChange?.('light-color'));
+    this.colorInput.addEventListener('change', e => {
+      e.stopPropagation();
+      this.onChange?.('light-color');
+    });
 
     this.samplesRotWidget = document.createElement('div');
     this.samplesRotWidget.className = 'marker samples-rot';
@@ -656,7 +662,9 @@ export class ViewCore {
     sel.className = 'light-ctrl__select';
     sel.title = 'Light type';
     for (const t of LIGHT_TYPES) sel.add(new Option(t, t, false, t === light.type));
-    sel.addEventListener('change', () => {
+    sel.addEventListener('input', e => e.stopPropagation());
+    sel.addEventListener('change', e => {
+      e.stopPropagation();
       light.type = sel.value as Light['type'];
       this.update();
       this.onChange?.('light-type');
