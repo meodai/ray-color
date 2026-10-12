@@ -12,7 +12,7 @@
 // `change` once on release, `palettechange` whenever the sampled colors move.
 
 import type { Light, Scene, RGB } from '../engine';
-import { toSRGB8 } from '../engine';
+import { toSRGB8, isHexColor } from '../engine';
 import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core';
 import { VIEW_STYLES } from './styles';
 
@@ -30,6 +30,12 @@ function numAttr(el: Element, name: string, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// invalid hex makes the engine throw, so a typo in markup falls back instead
+function hexAttr(el: Element, name: string, fallback: string) {
+  const v = el.getAttribute(name)?.trim();
+  return v && isHexColor(v) ? (v[0] === '#' ? v : '#' + v) : fallback;
+}
+
 const LIGHT_TYPES = new Set(['point', 'area', 'directional', 'spot']);
 
 /** Attribute bag for one light. All state lives in attributes. */
@@ -38,7 +44,7 @@ export class RayColorLightElement extends HTMLElement {
     const type = this.getAttribute('type') ?? 'directional';
     return {
       type: (LIGHT_TYPES.has(type) ? type : 'directional') as Light['type'],
-      hex: this.getAttribute('hex') ?? '#ffffff',
+      hex: hexAttr(this, 'hex', '#ffffff'),
       yaw: numAttr(this, 'yaw', 0),
       pitch: numAttr(this, 'pitch', 0),
       dist: numAttr(this, 'dist', 4),
@@ -121,8 +127,8 @@ export class RayColorViewElement extends HTMLElement {
       cameraZ: numAttr(this, 'camera-z', -9.3),
       fov: numAttr(this, 'fov', 30),
       sphereRadius: numAttr(this, 'sphere-radius', 1.2),
-      sphereHex: this.getAttribute('sphere-hex') ?? '#ffffff',
-      wallHex: this.getAttribute('wall-hex') ?? '#999999',
+      sphereHex: hexAttr(this, 'sphere-hex', '#ffffff'),
+      wallHex: hexAttr(this, 'wall-hex', '#999999'),
       indirect: numAttr(this, 'indirect', 0.3),
       areaQuality: numAttr(this, 'area-quality', 6),
       wallReflect: (() => {
@@ -181,8 +187,8 @@ export class RayColorViewElement extends HTMLElement {
       s.cameraZ = numAttr(this, 'camera-z', s.cameraZ);
       s.fov = numAttr(this, 'fov', s.fov);
       s.sphereRadius = numAttr(this, 'sphere-radius', s.sphereRadius);
-      s.sphereHex = this.getAttribute('sphere-hex') ?? s.sphereHex;
-      s.wallHex = this.getAttribute('wall-hex') ?? s.wallHex;
+      s.sphereHex = hexAttr(this, 'sphere-hex', s.sphereHex);
+      s.wallHex = hexAttr(this, 'wall-hex', s.wallHex);
       s.indirect = numAttr(this, 'indirect', s.indirect);
       s.areaQuality = numAttr(this, 'area-quality', s.areaQuality);
       if (this.hasAttribute('wall-reflect')) {

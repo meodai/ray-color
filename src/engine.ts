@@ -19,7 +19,7 @@ export interface Light {
   yaw: number;    // degrees
   pitch: number;  // degrees
   dist: number;   // clamped to [sphereRadius, MAX_LIGHT_DISTANCE] on commit()
-  hex: string;    // sRGB hex, decoded to linear on commit()
+  hex: string;    // sRGB hex (#rgb or #rrggbb, alpha ignored), decoded to linear on commit()
   intensity: number;
   angle: number;  // spot cone, degrees
   size: number;   // area emitter radius (world units); 0 = point-like
@@ -83,15 +83,21 @@ for (let i = 0; i < 4096; i++) {
 }
 export const toSRGB8 = (c: number) => SRGB_LUT[c >= 1 ? 4095 : c <= 0 ? 0 : (c * 4095 + 0.5) | 0];
 
+/** Decode #rgb, #rgba, #rrggbb or #rrggbbaa (alpha ignored, leading # optional)
+ * to linear RGB. Throws on anything else: a silently black light is much
+ * harder to track down than an error. */
 export function hexToRgb(hex: string, out: Float32Array) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  if (result) {
-    out[0] = srgbToLinear(parseInt(result[1], 16) / 255);
-    out[1] = srgbToLinear(parseInt(result[2], 16) / 255);
-    out[2] = srgbToLinear(parseInt(result[3], 16) / 255);
-  }
+  const m = /^#?([a-f\d]{3,4}|[a-f\d]{6}|[a-f\d]{8})$/i.exec(hex);
+  if (!m) throw new TypeError(`ray-color: invalid hex color ${JSON.stringify(hex)}`);
+  const h = m[1].length <= 4 ? m[1].replace(/./g, '$&$&') : m[1];
+  out[0] = srgbToLinear(parseInt(h.slice(0, 2), 16) / 255);
+  out[1] = srgbToLinear(parseInt(h.slice(2, 4), 16) / 255);
+  out[2] = srgbToLinear(parseInt(h.slice(4, 6), 16) / 255);
   return out;
 }
+
+/** Does hexToRgb accept this string? */
+export const isHexColor = (hex: string) => /^#?([a-f\d]{3,4}|[a-f\d]{6}|[a-f\d]{8})$/i.test(hex);
 
 // ---------------------------------------------------------------- surface shapes
 // Shapes drawn on the sphere sample N colors along themselves. A "line" is a

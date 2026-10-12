@@ -640,7 +640,9 @@ export class ViewCore {
     swatch.addEventListener('click', e => {
       e.stopPropagation();
       this.colorLight = i;
-      this.colorInput.value = light.hex;
+      // <input type=color> only takes #rrggbb
+      const h = light.hex.replace('#', '');
+      this.colorInput.value = '#' + (h.length <= 4 ? h.slice(0, 3).replace(/./g, '$&$&') : h.slice(0, 6));
       // anchor the native picker at the swatch
       this.colorInput.style.left = swatch.style.left;
       this.colorInput.style.top = swatch.style.top;
