@@ -160,6 +160,7 @@ export class ViewCore {
 
   private resizeObserver: ResizeObserver;
   private disposed = false;
+  private readonly activeDrags = new Set<() => void>();
   private readonly colorInput: HTMLInputElement;
   private colorLight = -1; // which light the open color picker edits
 
@@ -404,6 +405,11 @@ export class ViewCore {
 
   dispose() {
     this.disposed = true;
+    // a drag still in flight would otherwise keep driving (and reporting
+    // from) this dead core through its window listeners
+    for (const stop of [...this.activeDrags]) stop();
+    this.onInput = this.onChange = this.onLightSelect = this.onSampleSelect = null;
+    this.onPalette = this.onUpdate = this.onSettled = null;
     this.resizeObserver.disconnect();
     clearTimeout(this.settleTimer);
     this.glPreview?.dispose();
@@ -977,7 +983,7 @@ export class ViewCore {
       this.onInput?.('light');
       this.update();
     };
-    this.trackDrag(move, 'light');
+    this.trackDrag(e, move, 'light');
   }
 
   private beadWorld(i: number) {
@@ -1184,7 +1190,7 @@ export class ViewCore {
       this.onInput?.(EVENT[kind]);
       this.update();
     };
-    this.trackDrag(move, EVENT[kind]);
+    this.trackDrag(e, move, EVENT[kind]);
   }
 
   // ---------------------------------------------------------------- samples (points mode)
@@ -1261,7 +1267,7 @@ export class ViewCore {
       }
       last = bearing;
     };
-    this.trackDrag(move, 'samples-rotate');
+    this.trackDrag(e, move, 'samples-rotate');
   }
 
   private createSampleAt(dir: Float64Array, select = true) {
@@ -1519,7 +1525,7 @@ export class ViewCore {
       dir[2] = -Math.cos(yr) * cp;
       onMove();
     };
-    this.trackDrag(move, kind);
+    this.trackDrag(e, move, kind);
   }
 
   private beginHandleDrag(e: PointerEvent, role: HandleRole) {
@@ -1559,7 +1565,7 @@ export class ViewCore {
         shape.rotate = bearing * 180 / Math.PI - 180;
         refresh();
       };
-      this.trackDrag(move, 'shape');
+      this.trackDrag(e, move, 'shape');
       return;
     }
     if (role === 'rot') {
@@ -1583,7 +1589,7 @@ export class ViewCore {
         }
         last = bearing;
       };
-      this.trackDrag(move, 'shape');
+      this.trackDrag(e, move, 'shape');
       return;
     }
     // radius grip: absolute — rho is the angle between center and the point under
@@ -1601,7 +1607,7 @@ export class ViewCore {
       if (bearing !== null) shape.rotate = bearing * 180 / Math.PI;
       refresh();
     };
-    this.trackDrag(move, 'shape');
+    this.trackDrag(e, move, 'shape');
   }
 
   // Current handle positions in canvas pixels, for forgiving grabbing
@@ -1737,7 +1743,7 @@ export class ViewCore {
           this.emitPalette();
         }
       };
-      this.trackDrag(move, 'shape');
+      this.trackDrag(e, move, 'shape');
       this.recomputeShapeColors();
       this.updateShapeOverlay();
       this.emitPalette();
@@ -1825,15 +1831,29 @@ export class ViewCore {
     });
   }
 
-  /** Shared drag plumbing: window-level move/up, change emitted on release. */
-  private trackDrag(move: (ev: PointerEvent) => void, kind: InputKind) {
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+  /** Shared drag plumbing: window-level move/up, change emitted on release.
+   * Each drag follows only the pointer that started it, and a cancelled
+   * pointer (system gesture, palm rejection) ends it like a release. */
+  private trackDrag(start: PointerEvent, move: (ev: PointerEvent) => void, kind: InputKind) {
+    const id = start.pointerId;
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === id) move(ev);
+    };
+    const end = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      stop();
       this.onChange?.(kind);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      this.activeDrags.delete(stop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    this.activeDrags.add(stop);
   }
 
   private emitPalette() {
