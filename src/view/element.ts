@@ -254,6 +254,7 @@ export class RayColorViewElement extends ElementBase {
     });
     this.childObserver.observe(this, { subtree: true, childList: true, attributes: true });
 
+    if (pending.scene) this.reflectScene();
     this.emit('palettechange', { colors: this.colors() });
   }
 
