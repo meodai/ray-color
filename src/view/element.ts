@@ -13,7 +13,7 @@
 
 import type { Light, Scene, RGB } from '../engine.js';
 import { toSRGB8, isHexColor } from '../engine.js';
-import { ViewCore, type GlFactory, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core.js';
+import { ViewCore, type GlFactory, type InputKind, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core.js';
 import { VIEW_STYLES } from './styles.js';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
@@ -95,6 +95,22 @@ export class RayColorShapeElement extends ElementBase {
     else this.removeAttribute('rho');
     this.setAttribute('rotate', fmt(s.rotate));
   }
+}
+
+export interface PaletteColor { hex: string; rgb: [number, number, number] }
+
+/** Events dispatched by <ray-color-view>, all bubbling and composed. */
+export interface RayColorViewEventMap extends HTMLElementEventMap {
+  /** Continuously while a control is dragged. */
+  input: CustomEvent<{ kind: InputKind; colors: PaletteColor[] }>;
+  /** Once per gesture, after the child attributes were updated. */
+  change: CustomEvent<{ kind: InputKind; colors: PaletteColor[] }>;
+  palettechange: CustomEvent<{ colors: PaletteColor[] }>;
+  lightselect: CustomEvent<{ index: number | null }>;
+  sampleselect: CustomEvent<{ index: number | null }>;
+  viewupdate: CustomEvent<Record<string, never>>;
+  /** The exact f64 frame has landed on the canvas. */
+  settled: CustomEvent<Record<string, never>>;
 }
 
 const SCENE_ATTRS = ['fov', 'camera-z', 'sphere-radius', 'sphere-hex', 'wall-hex', 'indirect', 'area-quality', 'wall-reflect'] as const;
@@ -380,7 +396,7 @@ export class RayColorViewElement extends ElementBase {
     this.applyingAttrs = false;
   }
 
-  colors(): { hex: string; rgb: [number, number, number] }[] {
+  colors(): PaletteColor[] {
     const cols = this.core?.colors() ?? [];
     return Array.from(cols, (c: ArrayLike<number>) => ({
       hex: '#' + [c[0], c[1], c[2]].map(v => toSRGB8(v).toString(16).padStart(2, '0')).join(''),
@@ -405,6 +421,21 @@ export class RayColorViewElement extends ElementBase {
   clearSampleSelection() { this.core?.clearSampleSelection(); }
   selectSampleAt(i: number) { this.core?.selectSampleAt(i); }
   get selectedSampleIndex() { return this.core?.selectedSampleIndex ?? -1; }
+}
+
+export interface RayColorViewElement {
+  addEventListener<K extends keyof RayColorViewEventMap>(type: K, listener: (this: RayColorViewElement, ev: RayColorViewEventMap[K]) => unknown, options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof RayColorViewEventMap>(type: K, listener: (this: RayColorViewElement, ev: RayColorViewEventMap[K]) => unknown, options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'ray-color-view': RayColorViewElement;
+    'ray-color-light': RayColorLightElement;
+    'ray-color-shape': RayColorShapeElement;
+  }
 }
 
 // Set by whichever entry registers the elements. Read when a view connects,

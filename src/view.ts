@@ -6,8 +6,8 @@ import { createGlPreview } from './gl-preview.js';
 import { defineRayColorView } from './view/element.js';
 
 export { RayColorViewElement, RayColorLightElement, RayColorShapeElement, defineRayColorView } from './view/element.js';
-export { ViewCore } from './view/core.js';
 export { LIGHT_TYPE_ICONS } from './view/icons.js';
-export type { ViewCoreOptions, SampleMode, SpacingName, SurfaceShape, ShapeInit, InputKind, GlFactory } from './view/core.js';
+export type { PaletteColor, RayColorViewEventMap } from './view/element.js';
+export type { SampleMode, SpacingName, SurfaceShape, ShapeInit, InputKind, GlFactory } from './view/core.js';
 
 defineRayColorView(createGlPreview);
