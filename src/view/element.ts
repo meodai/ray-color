@@ -109,7 +109,6 @@ export class RayColorViewElement extends ElementBase {
   static observedAttributes = ['mode', 'count', 'spacing', 'controls', ...SCENE_ATTRS];
 
   private core: ViewCore | null = null;
-  private glFactory: GlFactory | null;
   private childObserver: MutationObserver | null = null;
   private applyingAttrs = false;
   // live state kept across a disconnect, so re-inserting the element resumes
@@ -117,11 +116,6 @@ export class RayColorViewElement extends ElementBase {
   // property writes that arrive before there's a core to apply them to
   private pending: { scene?: Partial<Scene>; shape?: ShapeInit | null; dirs?: ArrayLike<number>[] } = {};
   private saved: { scene: Scene; lights: Light[]; shape: SurfaceShape | null; dirs: Float64Array[] | null } | null = null;
-
-  constructor(glFactory: GlFactory | null = null) {
-    super();
-    this.glFactory = glFactory;
-  }
 
   // ------------------------------------------------------------ lifecycle
 
@@ -165,7 +159,7 @@ export class RayColorViewElement extends ElementBase {
     const core = new ViewCore(shadow, {
       scene,
       lights,
-      glFactory: renderer === 'software' ? null : this.glFactory,
+      glFactory: renderer === 'software' ? null : registeredGlFactory,
       controls: this.hasAttribute('controls'),
       mode: (this.getAttribute('mode') as SampleMode) || 'circle',
       count: numAttr(this, 'count', 7),
@@ -310,7 +304,7 @@ export class RayColorViewElement extends ElementBase {
     const next = new ViewCore(shadow, {
       scene: keep.scene,
       lights,
-      glFactory: this.getAttribute('renderer') === 'software' ? null : this.glFactory,
+      glFactory: this.getAttribute('renderer') === 'software' ? null : registeredGlFactory,
       controls: this.hasAttribute('controls'),
       mode: keep.mode,
       count: keep.count,
@@ -413,14 +407,24 @@ export class RayColorViewElement extends ElementBase {
   get selectedSampleIndex() { return this.core?.selectedSampleIndex ?? -1; }
 }
 
-/** Register the elements. glFactory carries the WebGL2 preview constructor —
- * the software-only entry passes null and ships no shader code. */
+// Set by whichever entry registers the elements. Read when a view connects,
+// so importing ray-color/view after ray-color/view/software still gives views
+// connected from then on the WebGL2 preview.
+let registeredGlFactory: GlFactory | null = null;
+
+/** Register the elements. glFactory carries the WebGL2 preview constructor;
+ * the software-only entry passes null and ships no shader code. Safe to call
+ * repeatedly and from both entries: a factory, once given, is kept, and tags
+ * some other code already defined are left alone. */
 export function defineRayColorView(glFactory: GlFactory | null) {
   if (typeof customElements === 'undefined') return;
-  if (customElements.get('ray-color-view')) return;
-  customElements.define('ray-color-light', RayColorLightElement);
-  customElements.define('ray-color-shape', RayColorShapeElement);
-  customElements.define('ray-color-view', class extends RayColorViewElement {
-    constructor() { super(glFactory); }
-  });
+  if (glFactory) registeredGlFactory = glFactory;
+  const define = (tag: string, ctor: CustomElementConstructor) => {
+    const existing = customElements.get(tag);
+    if (!existing) customElements.define(tag, ctor);
+    else if (existing !== ctor) console.warn(`ray-color: <${tag}> is already defined by other code (another copy of ray-color?); keeping that definition`);
+  };
+  define('ray-color-light', RayColorLightElement);
+  define('ray-color-shape', RayColorShapeElement);
+  define('ray-color-view', RayColorViewElement);
 }
