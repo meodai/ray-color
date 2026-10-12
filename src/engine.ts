@@ -253,7 +253,8 @@ export interface Engine {
    * strongly from a neighbor (geometric edges) with a 2x2 sub-pixel grid,
    * averaged in linear light. Returns the number of refined pixels. */
   refineEdges(out: Uint8ClampedArray, threshold?: number): number;
-  /** Cast the pixel ray against the sphere. Returns a SCRATCH hit — copy what you keep. */
+  /** Cast the pixel ray against the sphere. Returns a SCRATCH hit — copy what you keep.
+   * Null on a miss or for a pixel outside the canvas. */
   castRay(x: number, y: number): Hit | null;
   /** Lit color of the surface point a unit direction points at. Returns a SCRATCH — copy what you keep. */
   shade(dir: ArrayLike<number>): RGB;
@@ -920,7 +921,11 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   // ---------------------------------------------------------------- sampling & camera
 
   function castRay(x: number, y: number) {
-    const idx = (Math.floor(y) * width + Math.floor(x)) * 3;
+    const px = Math.floor(x), py = Math.floor(y);
+    // out-of-range reads would be undefined -> NaN, which slips past every
+    // `< 0` test in intersectSphere and comes back as a NaN "hit"
+    if (!(px >= 0 && px < width && py >= 0 && py < height)) return null;
+    const idx = (py * width + px) * 3;
     const dirX = rayDirectionCache[idx];
     const dirY = rayDirectionCache[idx + 1];
     const dirZ = rayDirectionCache[idx + 2];
