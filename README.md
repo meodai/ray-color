@@ -162,6 +162,22 @@ opts out of the WebGL2 preview at runtime; the interactive preview is f32 on
 the GPU, but the settled frame and every sampled color always come from the
 f64 CPU engine.
 
+### Bloom
+
+```html
+<ray-color-view controls bloom="1.2" bloom-threshold="0.6"></ray-color-view>
+```
+
+`bloom` adds a glow around the brightest parts of the image (a bare `bloom`
+attribute means strength 1; `bloom-threshold` is the linear brightness where
+the glow starts, default 0.8). It is display only: a WebGL2 overlay blended
+on top of whatever frame is showing. `shade()`, `colors()` and
+`palettechange` never include it, so the palette stays exact while the
+picture glows. Near bright highlights a sample dot will look darker than the
+glowing pixels around it; the dot shows the real color.
+`view.exportImage()` leaves the glow out, and `view.exportImage({ bloom: true })`
+includes it. The software-only entry ships without bloom.
+
 The component never captures page scroll: the camera distance is set with
 the `camera-z` attribute (or `view.scene.cameraZ` + `view.update()`), and
 scroll-to-dolly is the embedding page's decision — a `wheel` listener on the

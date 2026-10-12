@@ -26,6 +26,7 @@ import {
   type Scene,
 } from '../engine.js';
 import type { GlPreview } from '../gl-preview.js';
+import type { Bloom, BloomFactory } from '../bloom.js';
 import { LIGHT_TYPE_ICONS } from './icons.js';
 
 export type SampleMode = 'points' | 'line' | 'circle';
@@ -75,6 +76,13 @@ export interface ViewCoreOptions {
   /** Inject createGlPreview for the GPU interaction preview; omit (or null)
    * for the software-only build — the shader never enters the bundle. */
   glFactory?: GlFactory | null;
+  /** Inject createBloom to allow the display-only glow; omit (or null) and
+   * the bloom setting is ignored. */
+  bloomFactory?: BloomFactory | null;
+  /** Glow strength, 0 = off. Display only: sampled colors never include it. */
+  bloom?: number;
+  /** Linear brightness where the glow starts. */
+  bloomThreshold?: number;
   controls?: boolean;
   mode?: SampleMode;
   count?: number;
@@ -142,6 +150,10 @@ export class ViewCore {
   private imageData: ImageData;
   private glPreview: GlPreview | null = null;
   private readonly glFactory: GlFactory | null;
+  private bloomFx: Bloom | null = null;
+  private readonly bloomFactory: BloomFactory | null;
+  private _bloom: number;
+  private _bloomThreshold: number;
 
   private _mode: SampleMode;
   private _count: number;
@@ -178,6 +190,9 @@ export class ViewCore {
     this.scene = opts.scene;
     this.lights = opts.lights;
     this.glFactory = opts.glFactory ?? null;
+    this.bloomFactory = opts.bloomFactory ?? null;
+    this._bloom = Math.max(0, opts.bloom ?? 0);
+    this._bloomThreshold = opts.bloomThreshold ?? 0.8;
     this._controls = opts.controls ?? true;
     this._mode = opts.mode ?? 'circle';
     this._count = opts.count ?? 7;
@@ -242,6 +257,8 @@ export class ViewCore {
       }
     }
 
+    this.syncBloom();
+
     // One persistent color input outside the marker layer (which is wiped on
     // every update): the native picker stays anchored and alive while its
     // input events stream through re-renders
@@ -288,6 +305,7 @@ export class ViewCore {
         this._engine = createEngine(size, size, this.scene, this.lights);
         this.lightPositions = this._engine.lightPositions;
         this.glPreview?.resize(size, size);
+        this.bloomFx?.resize(size, size);
         this.update();
       }, 150);
     });
@@ -327,6 +345,16 @@ export class ViewCore {
       rotate: s.rotate ?? 0,
     };
     this.refreshShape();
+  }
+  get bloom(): number { return this._bloom; }
+  set bloom(strength: number) {
+    this._bloom = Math.max(0, Number.isFinite(strength) ? strength : 0);
+    this.syncBloom();
+  }
+  get bloomThreshold(): number { return this._bloomThreshold; }
+  set bloomThreshold(t: number) {
+    this._bloomThreshold = Number.isFinite(t) ? Math.max(0, t) : 0.8;
+    this.syncBloom();
   }
   get selectedLight(): number { return this._selectedLight; }
   get selectedSampleIndex(): number { return this.selectedSample ? this.samples.indexOf(this.selectedSample) : -1; }
@@ -388,13 +416,21 @@ export class ViewCore {
 
   /** The settled f64 render with the sample dots painted on — export-ready.
    * Forces a synchronous CPU frame if the GL preview is covering the canvas. */
-  exportImage(): HTMLCanvasElement {
+  exportImage(opts: { bloom?: boolean } = {}): HTMLCanvasElement {
     this.ensureSettledCanvas();
     const out = document.createElement('canvas');
     out.width = this.canvas.width;
     out.height = this.canvas.height;
     const octx = out.getContext('2d')!;
     octx.drawImage(this.canvas, 0, 0);
+    if (opts.bloom && this.bloomFx && this._bloom > 0) {
+      // re-render and copy in the same task: the bloom canvas keeps no
+      // drawing buffer once the frame has been presented
+      this.bloomFx.render(this.canvas, this._bloom, this._bloomThreshold);
+      octx.globalCompositeOperation = 'lighter';
+      octx.drawImage(this.bloomFx.canvas, 0, 0, out.width, out.height);
+      octx.globalCompositeOperation = 'source-over';
+    }
     if (this._mode !== 'points' && this._shape) {
       this.shapeSampleDirs().forEach((d, i) => {
         const p = this.projectDirPct(d);
@@ -430,6 +466,9 @@ export class ViewCore {
     const gl = this.glPreview;
     this.glPreview = null;
     gl?.dispose();
+    const bloom = this.bloomFx;
+    this.bloomFx = null;
+    bloom?.dispose();
     this.viewport.remove();
   }
 
@@ -445,6 +484,9 @@ export class ViewCore {
       // GPU frame now; full-precision CPU frame once edits stop coming
       this.renderGen++;
       this.glPreview.draw(this.scene, this.lights);
+      // read the GL canvas now: without preserveDrawingBuffer it's only
+      // readable in the task that drew it
+      this.applyBloom(this.glPreview.canvas);
       if (!this.glPreview.canvas.classList.contains('gl-visible')) this.glPreview.canvas.classList.add('gl-visible');
       clearTimeout(this.settleTimer);
       this.settleTimer = window.setTimeout(() => this.cpuSettle(), SETTLE_MS);
@@ -475,6 +517,7 @@ export class ViewCore {
     if (done) {
       this._engine.refineEdges(this.imageData.data);
       this.ctx.putImageData(this.imageData, 0, 0);
+      this.applyBloom(this.canvas);
       this.glPreview?.canvas.classList.remove('gl-visible');
       this.onSettled?.();
     }
@@ -494,6 +537,7 @@ export class ViewCore {
     this._engine.renderPass(this.imageData.data, 1);
     this._engine.refineEdges(this.imageData.data);
     this.ctx.putImageData(this.imageData, 0, 0);
+    this.applyBloom(this.canvas);
     this.glPreview.canvas.classList.remove('gl-visible');
     this.onSettled?.();
   }
@@ -508,6 +552,7 @@ export class ViewCore {
     for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
       this._engine.renderPass(this.imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
       this.ctx.putImageData(this.imageData, 0, 0);
+      this.applyBloom(this.canvas);
       await new Promise(requestAnimationFrame);
       if (this.disposed) { this.renderInProgress = false; return; }
     }
@@ -515,6 +560,7 @@ export class ViewCore {
     if (!this.pendingRender) {
       this._engine.refineEdges(this.imageData.data);
       this.ctx.putImageData(this.imageData, 0, 0);
+      this.applyBloom(this.canvas);
       this.onSettled?.();
     }
     this.renderInProgress = false;
@@ -522,6 +568,42 @@ export class ViewCore {
       this.pendingRender = false;
       this.cpuProgressiveRender();
     }
+  }
+
+  // ---------------------------------------------------------------- bloom
+
+  /** Create, show or hide the glow overlay to match the bloom setting, and
+   * refresh it for the frame on screen. */
+  private syncBloom() {
+    if (this.disposed) return;
+    if (this._bloom > 0 && !this.bloomFx && this.bloomFactory) {
+      try {
+        this.bloomFx = this.bloomFactory(this.canvas.width, this.canvas.height);
+      } catch (err) {
+        console.warn(err);
+      }
+      const fx = this.bloomFx;
+      if (fx) {
+        fx.canvas.classList.add('bloom-canvas');
+        fx.canvas.setAttribute('aria-hidden', 'true');
+        (this.glPreview?.canvas ?? this.canvas).insertAdjacentElement('afterend', fx.canvas);
+        fx.canvas.addEventListener('webglcontextlost', () => {
+          if (this.bloomFx !== fx) return;
+          fx.canvas.remove();
+          this.bloomFx = null;
+        });
+      }
+    }
+    if (!this.bloomFx) return;
+    this.bloomFx.canvas.classList.toggle('bloom-on', this._bloom > 0);
+    if (this._bloom <= 0) return;
+    // the GL canvas can't be read back after it was presented, so redraw it
+    if (this.glPreview?.canvas.classList.contains('gl-visible')) this.requestRender();
+    else this.applyBloom(this.canvas);
+  }
+
+  private applyBloom(source: HTMLCanvasElement) {
+    if (this.bloomFx && this._bloom > 0) this.bloomFx.render(source, this._bloom, this._bloomThreshold);
   }
 
   // ---------------------------------------------------------------- projection helpers

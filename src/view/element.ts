@@ -15,6 +15,7 @@ import type { Light, Scene, RGB } from '../engine.js';
 import { toSRGB8, isHexColor } from '../engine.js';
 import { ViewCore, type GlFactory, type InputKind, type SampleMode, type SpacingName, type ShapeInit, type SurfaceShape } from './core.js';
 import { VIEW_STYLES } from './styles.js';
+import type { BloomFactory } from '../bloom.js';
 
 const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
 // shape anchors get more digits: 3 decimals moved them by up to ~1e-3 rad,
@@ -184,7 +185,7 @@ const DEFAULT_LIGHTS = (): Light[] => [
 ];
 
 export class RayColorViewElement extends ElementBase {
-  static observedAttributes = ['mode', 'count', 'spacing', 'controls', 'renderer', ...SCENE_ATTRS];
+  static observedAttributes = ['mode', 'count', 'spacing', 'controls', 'renderer', 'bloom', 'bloom-threshold', ...SCENE_ATTRS];
 
   private core: ViewCore | null = null;
   private childObserver: MutationObserver | null = null;
@@ -233,6 +234,9 @@ export class RayColorViewElement extends ElementBase {
       controls: this.hasAttribute('controls'),
       mode: parseMode(this.getAttribute('mode')),
       count: numAttr(this, 'count', 7),
+      bloomFactory: registeredBloomFactory,
+      bloom: this.bloomAttr(),
+      bloomThreshold: numAttr(this, 'bloom-threshold', 0.8),
       spacing: (this.getAttribute('spacing') as SpacingName) || 'linear',
     });
     this.core = core;
@@ -297,10 +301,17 @@ export class RayColorViewElement extends ElementBase {
     else if (name === 'spacing') core.spacing = (value as SpacingName) || 'linear';
     else if (name === 'controls') core.controls = value !== null;
     else if (name === 'renderer') this.rebuild(core.lights);
+    else if (name === 'bloom') core.bloom = this.bloomAttr();
+    else if (name === 'bloom-threshold') core.bloomThreshold = numAttr(this, 'bloom-threshold', 0.8);
     else if ((SCENE_ATTRS as readonly string[]).includes(name)) {
       applySceneAttr(this, core.scene, name as SceneAttr);
       core.update();
     }
+  }
+
+  /** `bloom` alone turns the glow on at strength 1; a number sets it. */
+  private bloomAttr() {
+    return this.hasAttribute('bloom') ? numAttr(this, 'bloom', 1) : 0;
   }
 
   // ------------------------------------------------------------ two-way sync
@@ -369,6 +380,9 @@ export class RayColorViewElement extends ElementBase {
       controls: this.hasAttribute('controls'),
       mode: keep.mode,
       count: keep.count,
+      bloomFactory: registeredBloomFactory,
+      bloom: core.bloom,
+      bloomThreshold: core.bloomThreshold,
       spacing: keep.spacing,
     });
     this.core = next;
@@ -449,6 +463,22 @@ export class RayColorViewElement extends ElementBase {
     else this.pending.shape = s;
   }
   get selectedLight() { return this.core?.selectedLight ?? -1; }
+  /** Display-only glow strength (0 = off); sampled colors never include it. */
+  get bloom(): number { return this.core?.bloom ?? this.bloomAttr(); }
+  set bloom(strength: number) {
+    if (this.core) this.core.bloom = strength;
+    if (strength > 0) this.reflectSimpleAttr('bloom', String(strength));
+    else {
+      this.applyingAttrs = true;
+      this.removeAttribute('bloom');
+      this.applyingAttrs = false;
+    }
+  }
+  get bloomThreshold(): number { return this.core?.bloomThreshold ?? numAttr(this, 'bloom-threshold', 0.8); }
+  set bloomThreshold(t: number) {
+    if (this.core) this.core.bloomThreshold = t;
+    this.reflectSimpleAttr('bloom-threshold', String(t));
+  }
 
   /** Discrete mode/count/spacing changes reflect immediately (unlike drags,
    * which reflect on release). */
@@ -476,7 +506,8 @@ export class RayColorViewElement extends ElementBase {
   shade(dir: ArrayLike<number>): RGB | null { return this.core ? this.core.engine.shade(dir) : null; }
 
   update() { this.core?.update(); }
-  exportImage(): HTMLCanvasElement | null { return this.core?.exportImage() ?? null; }
+  /** The settled frame with the sample dots; `bloom: true` adds the glow. */
+  exportImage(opts?: { bloom?: boolean }): HTMLCanvasElement | null { return this.core?.exportImage(opts) ?? null; }
   ensureSettledCanvas() { this.core?.ensureSettledCanvas(); }
   selectLight(i: number) { this.core?.selectLight(i); }
   deleteSelection() { this.core?.deleteSelection(); }
@@ -504,14 +535,17 @@ declare global {
 // so importing ray-color/view after ray-color/view/software still gives views
 // connected from then on the WebGL2 preview.
 let registeredGlFactory: GlFactory | null = null;
+let registeredBloomFactory: BloomFactory | null = null;
 
 /** Register the elements. glFactory carries the WebGL2 preview constructor;
- * the software-only entry passes null and ships no shader code. Safe to call
+ * bloomFactory the display-only glow. The software-only entry passes null
+ * for both and ships no shader code. Safe to call
  * repeatedly and from both entries: a factory, once given, is kept, and tags
  * some other code already defined are left alone. */
-export function defineRayColorView(glFactory: GlFactory | null) {
+export function defineRayColorView(glFactory: GlFactory | null, bloomFactory: BloomFactory | null = null) {
   if (typeof customElements === 'undefined') return;
   if (glFactory) registeredGlFactory = glFactory;
+  if (bloomFactory) registeredBloomFactory = bloomFactory;
   const define = (tag: string, ctor: CustomElementConstructor) => {
     const existing = customElements.get(tag);
     if (!existing) customElements.define(tag, ctor);

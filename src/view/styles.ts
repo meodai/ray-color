@@ -60,6 +60,25 @@ export const VIEW_STYLES = `
   display: none;
 }
 
+/* Display-only glow: half-res, stretched over the frame and added on top.
+   It sits between the image and the overlays, so markers never glow. */
+.bloom-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: none;
+  width: 100%;
+  border: var(--rcv-line) solid transparent;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  mix-blend-mode: plus-lighter;
+}
+
+.bloom-canvas.bloom-on {
+  display: block;
+}
+
 .gizmo {
   position: absolute;
   inset: 0;
