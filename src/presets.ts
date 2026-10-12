@@ -68,14 +68,14 @@ export const PRESETS: ScenePreset[] = [
   },
   {
     name: 'Mixed fixtures',
-    scene: baseScene(),
+    scene: { ...baseScene(), bloom: { strength: 0.95, threshold: 0.48 } },
     lights: [
       light({ type: 'point', yaw: 20, pitch: 30, dist: 2.5, hex: '#88aaff', intensity: 2.3 }),
       light({ type: 'spot', yaw: -100, pitch: 10, dist: 5, hex: '#ffaa00', intensity: 8, angle: 22 }),
       light({ type: 'area', yaw: -170, pitch: -30, dist: 2.2, hex: '#ff4488', intensity: 2.2, size: 0.6 }),
     ],
     // Pink area glow into the blue point light: pink-gold-slate sweep
-    shape: { kind: 'line', a: unit(-0.75, -0.45, -0.5), b: unit(0.7, 0.55, -0.45), count: 7, spacing: 'smoothstep' },
+    shape: { kind: 'line', a: unit(-0.649, -0.481, -0.59), b: unit(0.747, 0.543, -0.384), count: 7, spacing: 'smoothstep' },
   },
   {
     name: 'Mirror box',
