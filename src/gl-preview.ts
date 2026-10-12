@@ -10,7 +10,7 @@
 // Playground-only: not part of the published library build.
 
 import {
-  type Scene, type Light,
+  type Scene, type Light, type GlowMap,
   hexToRgb, positionToAngles, MAX_LIGHT_DISTANCE,
 } from './engine.js';
 
@@ -56,6 +56,8 @@ uniform vec3 uLightDir[ML];        // unit direction toward the light (direction
 uniform vec3 uSpotAxis[ML];
 uniform vec3 uAreaU[ML];
 uniform vec3 uAreaV[ML];
+uniform sampler2D uGlow;           // the engine's bloom glow, top row first
+uniform bool uGlowOn;
 
 out vec4 fragColor;
 
@@ -341,17 +343,28 @@ void main() {
   vec3 o = vec3(0.0, 0.0, uCameraZ);
 
   vec3 color = vec3(0.0);
+  // where to read the glow: the pixel itself, or for sphere points their
+  // projected surface position (the engine's shade() convention)
+  vec2 glowUv = vec2(gl_FragCoord.x / uResolution.x, 1.0 - gl_FragCoord.y / uResolution.y);
+  bool glowHidden = false;
   float t = sphereT(o, dir, uSphereRadius);
   if (t < INF) {
     // Shade at normal * radius — the same reconstruction the CPU uses
     vec3 n = (o + dir * t) / uSphereRadius;
-    color = calcLighting(n * uSphereRadius, n, uSphereColor, true);
+    vec3 p = n * uSphereRadius;
+    color = calcLighting(p, n, uSphereColor, true);
+    float relZ = p.z - uCameraZ;
+    glowUv = vec2((p.x / (relZ * uAspectTanFov) + 1.0) * 0.5, (-p.y / (relZ * uTanFov) + 1.0) * 0.5);
+    glowHidden = p.z * uCameraZ - dot(p, p) <= 0.0;
   } else {
     vec3 wPos, wN;
     int wallId;
     if (roomHit(o, dir, wPos, wN, wallId)) {
       color = shadeWallPx(wPos, wN, wallId, dir);
     }
+  }
+  if (uGlowOn && !glowHidden && all(greaterThanEqual(glowUv, vec2(0.0))) && all(lessThanEqual(glowUv, vec2(1.0)))) {
+    color += texture(uGlow, glowUv).rgb;
   }
   fragColor = vec4(encodeSRGB(color), 1.0);
 }`;
@@ -363,8 +376,9 @@ export interface GlPreview {
   /** Upload the current scene/lights and render one frame. Reads the same
    * mutable objects the engine does; call after values change (no commit()
    * needed — light positions are derived the same way commit() derives them,
-   * without mutating the lights). */
-  draw(scene: Scene, lights: Light[]): void;
+   * without mutating the lights). Pass engine.glow() to add the bloom: the
+   * glow itself is computed by the engine, so preview and CPU frame agree. */
+  draw(scene: Scene, lights: Light[], glow?: GlowMap | null): void;
   resize(width: number, height: number): void;
   /** Current frame as top-down RGBA (same layout as ImageData) — for tests. */
   readPixels(): Uint8ClampedArray;
@@ -443,6 +457,15 @@ export function createGlPreview(
   const uSpotAxis = loc('uSpotAxis[0]');
   const uAreaU = loc('uAreaU[0]');
   const uAreaV = loc('uAreaV[0]');
+  const uGlowOn = loc('uGlowOn');
+  gl.uniform1i(loc('uGlow'), 0);
+  const glowTex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, glowTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  let uploadedGlow: GlowMap | null = null;
 
   // Flat upload scratch (avoids per-frame allocation)
   const colScratch = new Float32Array(3);
@@ -458,7 +481,16 @@ export function createGlPreview(
   const areaV = new Float32Array(MAX_LIGHTS * 3);
   const wallReflect = new Float32Array(5);
 
-  function draw(scene: Scene, lights: Light[]) {
+  function draw(scene: Scene, lights: Light[], glow: GlowMap | null = null) {
+    // the engine hands out a new map per rebuild, so identity says "changed"
+    if (glow && glow !== uploadedGlow) {
+      gl!.activeTexture(gl!.TEXTURE0);
+      gl!.bindTexture(gl!.TEXTURE_2D, glowTex);
+      gl!.pixelStorei(gl!.UNPACK_FLIP_Y_WEBGL, false);
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGB16F, glow.width, glow.height, 0, gl!.RGB, gl!.FLOAT, glow.data);
+      uploadedGlow = glow;
+    }
+    gl!.uniform1i(uGlowOn, glow ? 1 : 0);
     const count = Math.min(lights.length, MAX_LIGHTS);
     // Same derivation commit() performs, without mutating the lights
     for (let i = 0; i < count; i++) {
