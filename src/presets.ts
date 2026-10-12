@@ -56,10 +56,11 @@ const light = (over: Partial<Light>): Light => ({
 export const PRESETS: ScenePreset[] = [
   {
     name: 'Tricolor studio',
-    scene: baseScene(),
+    // Matches the playground's startup scene
+    scene: { ...baseScene(), cameraZ: -9.3, bloom: { strength: 0.85, threshold: 0.35 } },
     lights: [
       light({}),
-      light({ yaw: -125, pitch: -40, hex: '#fff700', intensity: 0.3 }),
+      light({ yaw: -125, pitch: -40, hex: '#fff700', intensity: 0.3, size: 0.4 }),
       light({ yaw: -39, pitch: -35, hex: '#00ffb3', intensity: 0.2 }),
     ],
     // The playground's own default circle

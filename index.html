@@ -67,7 +67,7 @@
 
       <div class="l-stage">
       <div class="l-body">
-        <ray-color-view id="view" controls mode="circle" count="7"></ray-color-view>
+        <ray-color-view id="view" controls mode="circle" count="7" bloom="0.85" bloom-threshold="0.35"></ray-color-view>
       </div>
 
       <button class="button button--icon drawer-toggle" id="drawerToggleBtn" title="Open the palette drawer" aria-controls="colorOverlay">
@@ -240,12 +240,12 @@
     </div>
     <div class="field">
       <span class="field__row"><label for="scnBloom">Bloom</label><output id="scnBloomOut"></output></span>
-      <input type="range" id="scnBloom" min="0" max="3" value="0" step="0.05">
+      <input type="range" id="scnBloom" min="0" max="3" value="0.85" step="0.05">
       <p class="field__help">Glow around the brightest light. Display only: the palette never includes it.</p>
     </div>
     <div class="field">
       <span class="field__row"><label for="scnBloomThreshold">Bloom threshold</label><output id="scnBloomThresholdOut"></output></span>
-      <input type="range" id="scnBloomThreshold" min="0" max="1" value="0.8" step="0.01">
+      <input type="range" id="scnBloomThreshold" min="0" max="1" value="0.35" step="0.01">
     </div>
     <div class="field">
       <span class="field__row"><label for="scnQuality">Area samples</label><output id="scnQualityOut"></output></span>

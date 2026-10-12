@@ -414,7 +414,6 @@ function readSceneInputs() {
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
-// Bloom is a view setting, not part of the scene: presets leave it alone
 const bloomInput = document.getElementById('scnBloom') as HTMLInputElement;
 const bloomThresholdInput = document.getElementById('scnBloomThreshold') as HTMLInputElement;
 bloomInput.addEventListener('input', () => { view.bloom = parseFloat(bloomInput.value); });
@@ -429,6 +428,8 @@ presetSelect.addEventListener('change', () => {
   if (!preset) return;
   applyingPreset = true;
   Object.assign(state, structuredClone(preset.scene));
+  // A preset without bloom turns it off rather than inheriting the last one
+  state.bloom = structuredClone(preset.scene.bloom) ?? { strength: 0, threshold: 0.8 };
   preset.lights.forEach((pl, i) => {
     if (i >= lights.length) return;
     Object.assign(lights[i], structuredClone(pl));
@@ -466,6 +467,8 @@ function syncSceneInputs() {
   scn.indirect.value = String(state.indirect);
   scn.reflect.value = String(Math.max(state.wallReflect.back, state.wallReflect.left, state.wallReflect.right, state.wallReflect.top, state.wallReflect.bottom));
   scn.quality.value = String(state.areaQuality);
+  bloomInput.value = String(state.bloom?.strength ?? 0);
+  bloomThresholdInput.value = String(state.bloom?.threshold ?? 0.8);
   syncOutputs();
 }
 
