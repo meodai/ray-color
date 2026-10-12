@@ -363,10 +363,11 @@ export class ViewCore {
     this.onLightSelect?.(next >= 0 ? next : null);
   }
 
-  /** Backspace behavior: drop the selected point, or the whole shape. */
+  /** Backspace behavior: drop the selected point. Line and circle modes
+   * always keep their shape (redraw or drag it instead), just as points
+   * mode always keeps one point, so the palette never goes empty. */
   deleteSelection() {
     if (this._mode === 'points') this.deleteSelectedSample();
-    else this.deleteShape();
   }
 
   /** Re-commit scene/lights and repaint everything. Call after mutating the
@@ -1428,7 +1429,7 @@ export class ViewCore {
     h.dataset.handle = role;
     h.title = title;
     const label = { a: this._shape?.kind === 'line' ? 'Line start' : 'Circle center', b: 'Line end', r: 'Circle radius', rot: 'Rotate line', crot: 'Rotate palette' }[role];
-    this.makeFocusable(h, `handle-${role}`, `${label} — arrow keys adjust, Delete removes the shape`);
+    this.makeFocusable(h, `handle-${role}`, `${label} — arrow keys adjust`);
     this.shapeHandles.appendChild(h);
     return h;
   }
@@ -1686,14 +1687,6 @@ export class ViewCore {
     return pts;
   }
 
-  private deleteShape() {
-    this._shape = null;
-    this.shapeColors = [];
-    this.updateShapeOverlay();
-    this.emitPalette();
-    this.onChange?.('shape');
-  }
-
   // ---------------------------------------------------------------- mode + defaults
 
   private normalize3(x: number, y: number, z: number) {
@@ -1920,7 +1913,7 @@ export class ViewCore {
   }
 
   // Keyboard path for every pointer control: Enter/Space selects, arrows
-  // adjust (Shift for bigger steps), Delete removes, Escape deselects
+  // adjust (Shift for bigger steps), Delete removes a point, Escape deselects
   private onKeyDown(e: KeyboardEvent) {
     if (!this._controls) return;
     const t = e.target as HTMLElement;
@@ -1945,12 +1938,9 @@ export class ViewCore {
       return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (sample) {
-        this.selectSample(sample);
-        this.deleteSelectedSample();
-      } else if (handle) {
-        this.deleteShape();
-      } else return;
+      if (!sample) return;
+      this.selectSample(sample);
+      this.deleteSelectedSample();
       // handled here: a page-level Backspace handler must not delete again
       e.preventDefault();
       e.stopPropagation();
