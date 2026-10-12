@@ -1827,13 +1827,18 @@ export class ViewCore {
       e.preventDefault();
       e.stopPropagation();
       const l = this.lights[this._selectedLight];
+      // in mouse-wheel notches: trackpads send many small pixel deltas, so a
+      // fixed step per event made them slide many times too fast
+      const LINE_PX = 100 / 3;
+      const px = e.deltaMode === 1 ? e.deltaY * LINE_PX : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+      const notches = Math.max(-1, Math.min(1, px / 100));
       if (l.type === 'directional') {
         // distance means nothing for a directional light (parallel rays) —
         // scroll drives its intensity instead, so every type has a wheel
-        l.intensity = Math.round(Math.max(0, Math.min(INT_MAX, l.intensity + (e.deltaY > 0 ? -0.05 : 0.05))) * 100) / 100;
+        l.intensity = Math.max(0, Math.min(INT_MAX, l.intensity - 0.05 * notches));
         this.onInput?.('light-intensity');
       } else {
-        l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + (e.deltaY > 0 ? 0.15 : -0.15)));
+        l.dist = Math.min(MAX_LIGHT_DISTANCE, Math.max(this.scene.sphereRadius, l.dist + 0.15 * notches));
         this.onInput?.('light-dist');
       }
       this.update();
