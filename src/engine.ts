@@ -411,6 +411,8 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   const lightColors = new Float32Array(lightCount * 3);
   const lightIntensities = new Float32Array(lightCount);
   const lightAngles = new Float32Array(lightCount);
+  // cos(spot angle), same expression the loops used to evaluate per sample
+  const lightCosAngles = new Float64Array(lightCount);
   const directionalDirs = new Array(lightCount).fill(null).map(() => new Float32Array(3));
   const spotAxes = new Array(lightCount).fill(null).map(() => new Float32Array(3));
   // Orthonormal basis perpendicular to each light's axis — area lights sample
@@ -475,6 +477,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
       hexToRgb(l.hex, lightColors.subarray(i * 3, i * 3 + 3) as Float32Array);
       lightIntensities[i] = l.intensity;
       lightAngles[i] = l.angle;
+      lightCosAngles[i] = Math.cos((lightAngles[i] * Math.PI) / 180);
       directionalDirs[i][0] = dx;
       directionalDirs[i][1] = dy;
       directionalDirs[i][2] = dz;
@@ -592,22 +595,30 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
         if (Math.abs(hx) <= bounds && Math.abs(hy) <= bounds && t < minT) { minT = t; nX = 0; nY = 0; nZ = -1; }
       }
     }
+    // each axis checks -bounds then +bounds, unrolled: an array literal here
+    // allocated on every call, and this runs 64 times per bounce
     if (Math.abs(dirX) > 1e-6) {
-      for (const side of [-bounds, bounds]) {
-        const t = (side - originX) / dirX;
-        if (t > 0) {
-          const hy = originY + dirY * t, hz = originZ + dirZ * t;
-          if (Math.abs(hy) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = side < 0 ? 1 : -1; nY = 0; nZ = 0; }
-        }
+      let t = (-bounds - originX) / dirX;
+      if (t > 0) {
+        const hy = originY + dirY * t, hz = originZ + dirZ * t;
+        if (Math.abs(hy) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = 1; nY = 0; nZ = 0; }
+      }
+      t = (bounds - originX) / dirX;
+      if (t > 0) {
+        const hy = originY + dirY * t, hz = originZ + dirZ * t;
+        if (Math.abs(hy) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = -1; nY = 0; nZ = 0; }
       }
     }
     if (Math.abs(dirY) > 1e-6) {
-      for (const side of [-bounds, bounds]) {
-        const t = (side - originY) / dirY;
-        if (t > 0) {
-          const hx = originX + dirX * t, hz = originZ + dirZ * t;
-          if (Math.abs(hx) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = 0; nY = side < 0 ? 1 : -1; nZ = 0; }
-        }
+      let t = (-bounds - originY) / dirY;
+      if (t > 0) {
+        const hx = originX + dirX * t, hz = originZ + dirZ * t;
+        if (Math.abs(hx) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = 0; nY = 1; nZ = 0; }
+      }
+      t = (bounds - originY) / dirY;
+      if (t > 0) {
+        const hx = originX + dirX * t, hz = originZ + dirZ * t;
+        if (Math.abs(hx) <= bounds && Math.abs(hz) <= bounds && t < minT) { minT = t; nX = 0; nY = -1; nZ = 0; }
       }
     }
     if (minT === Infinity) return null;
@@ -703,7 +714,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
           Lx /= dist; Ly /= dist; Lz /= dist;
           const Ax = spotAxes[i][0], Ay = spotAxes[i][1], Az = spotAxes[i][2];
           const LdotAxis = -(Lx * Ax + Ly * Ay + Lz * Az);
-          const cosAngle = Math.cos((lightAngles[i] * Math.PI) / 180);
+          const cosAngle = lightCosAngles[i];
           if (LdotAxis > cosAngle) {
             const shadowT = sphereShadowT(hitX + normalX * bias, hitY + normalY * bias, hitZ + normalZ * bias, Lx, Ly, Lz, radius);
             if (shadowT >= dist) {
@@ -863,7 +874,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
                 if (type === 'spot') {
                   // Respect the cone: bounce only where the spot actually shines
                   const LdotAxis = -((wlX * inv) * spotAxes[i][0] + (wlY * inv) * spotAxes[i][1] + (wlZ * inv) * spotAxes[i][2]);
-                  const cosAngle = Math.cos((lightAngles[i] * Math.PI) / 180);
+                  const cosAngle = lightCosAngles[i];
                   if (LdotAxis <= cosAngle) {
                     wallDiffuse = 0;
                   } else {
