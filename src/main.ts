@@ -414,6 +414,12 @@ function readSceneInputs() {
 }
 Object.values(scn).forEach(input => input.addEventListener('input', readSceneInputs));
 
+// Bloom is a view setting, not part of the scene: presets leave it alone
+const bloomInput = document.getElementById('scnBloom') as HTMLInputElement;
+const bloomThresholdInput = document.getElementById('scnBloomThreshold') as HTMLInputElement;
+bloomInput.addEventListener('input', () => { view.bloom = parseFloat(bloomInput.value); });
+bloomThresholdInput.addEventListener('input', () => { view.bloomThreshold = parseFloat(bloomThresholdInput.value); });
+
 // Scene presets. The select shows a preset name only while the scene still IS that preset:
 // any manual edit funnels through the view's update event, which snaps it back to None.
 const presetSelect = document.getElementById('scnPreset') as HTMLSelectElement;
@@ -847,7 +853,9 @@ document.getElementById('downloadPaletteBtnPNG')!.addEventListener('click', e =>
   e.stopPropagation();
   const colors = paletteData();
   if (!colors.length) return;
-  const render = view.exportImage(); // settled f64 frame + sample dots
+  // settled f64 frame + sample dots, with the glow if it is on: the image
+  // matches the screen, while the strip below keeps the exact colors
+  const render = view.exportImage({ bloom: true });
   if (!render) return;
   // Render + color strip below, like OKPalette's image export
   const stripHeight = 80;
