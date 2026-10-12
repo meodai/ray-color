@@ -68,7 +68,6 @@ const engine = createEngine(
     { type: 'point', position: [2.5, -3, 1], hex: '#fff700', intensity: 0.3, yaw: 0, pitch: 0, dist: 0, angle: 30, size: 0.4 },
   ],
 );
-engine.commit();
 
 // sample 5 colors along a circle drawn on the sphere's surface
 const dirs = sampleCircleDirs([0, 0, -1], Math.asin(0.8), 5, distributions.smoothstep);
@@ -77,6 +76,11 @@ const palette = dirs.map(d => {
   return '#' + [c.r, c.g, c.b].map(v => toSRGB8(v).toString(16).padStart(2, '0')).join('');
 });
 ```
+
+`createEngine` commits once itself. After that, mutate `scene` or the light
+objects in place and call `engine.commit()` again. The number of lights is
+fixed when the engine is created: `commit()` throws if lights were added or
+removed, so create a new engine for that.
 
 ### The room
 

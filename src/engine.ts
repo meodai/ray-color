@@ -341,6 +341,9 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
   }
 
   function commit() {
+    if (lights.length !== lightCount) {
+      throw new Error(`ray-color: engine was created with ${lightCount} lights, got ${lights.length}; create a new engine to add or remove lights`);
+    }
     hexToRgb(scene.sphereHex, sphereColor);
     hexToRgb(scene.wallHex, wallColor);
     for (let i = 0; i < lightCount; i++) {
