@@ -108,6 +108,9 @@ export class RayColorViewElement extends HTMLElement {
   private glFactory: GlFactory | null;
   private childObserver: MutationObserver | null = null;
   private applyingAttrs = false;
+  // live state kept across a disconnect, so re-inserting the element resumes
+  // where it left off instead of rebuilding from attributes
+  private saved: { scene: Scene; lights: Light[]; shape: SurfaceShape | null; dirs: Float64Array[] | null } | null = null;
 
   constructor(glFactory: GlFactory | null = null) {
     super();
@@ -117,13 +120,18 @@ export class RayColorViewElement extends HTMLElement {
   // ------------------------------------------------------------ lifecycle
 
   connectedCallback() {
+    // a move (remove + insert in the same task) keeps the running core
     if (this.core) return;
     const shadow = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
-    const style = document.createElement('style');
-    style.textContent = VIEW_STYLES;
-    shadow.appendChild(style);
+    if (!shadow.querySelector('style')) {
+      const style = document.createElement('style');
+      style.textContent = VIEW_STYLES;
+      shadow.appendChild(style);
+    }
 
-    const scene: Scene = {
+    const saved = this.saved;
+    this.saved = null;
+    const scene: Scene = saved?.scene ?? {
       cameraZ: numAttr(this, 'camera-z', -9.3),
       fov: numAttr(this, 'fov', 30),
       sphereRadius: numAttr(this, 'sphere-radius', 1.2),
@@ -137,8 +145,10 @@ export class RayColorViewElement extends HTMLElement {
       })(),
     };
 
+    // declarative children stay the source of truth; without them, a
+    // reconnect resumes the lights it had
     const lightEls = this.lightChildren();
-    const lights = lightEls.length ? lightEls.map(el => el.toLight()) : DEFAULT_LIGHTS();
+    const lights = lightEls.length ? lightEls.map(el => el.toLight()) : saved?.lights ?? DEFAULT_LIGHTS();
 
     const renderer = this.getAttribute('renderer');
     const core = new ViewCore(shadow, {
@@ -154,6 +164,8 @@ export class RayColorViewElement extends HTMLElement {
 
     const shapeInit = this.shapeChild()?.toShape();
     if (shapeInit) core.shape = shapeInit;
+    else if (saved?.shape) core.shape = saved.shape;
+    if (saved?.dirs) core.setSampleDirs(saved.dirs);
 
     this.connectCoreEvents();
 
@@ -169,10 +181,22 @@ export class RayColorViewElement extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.childObserver?.disconnect();
-    this.childObserver = null;
-    this.core?.dispose();
-    this.core = null;
+    // defer: a reorder or reparent reconnects within the same task, and the
+    // core (engine, GL context, samples) should survive that untouched
+    queueMicrotask(() => {
+      if (this.isConnected || !this.core) return;
+      const core = this.core;
+      this.saved = {
+        scene: core.scene,
+        lights: core.lights,
+        shape: core.shape,
+        dirs: core.mode === 'points' ? core.sampleDirs() : null,
+      };
+      this.childObserver?.disconnect();
+      this.childObserver = null;
+      core.dispose();
+      this.core = null;
+    });
   }
 
   attributeChangedCallback(name: string, _old: string | null, value: string | null) {
