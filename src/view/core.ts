@@ -26,6 +26,7 @@ import {
   type Scene,
 } from '../engine.js';
 import type { GlPreview } from '../gl-preview.js';
+import { RenderPool } from './render-pool.js';
 import { LIGHT_TYPE_ICONS } from './icons.js';
 
 export type SampleMode = 'points' | 'line' | 'circle';
@@ -158,6 +159,8 @@ export class ViewCore {
   private pendingRender = false;
   private settleTimer: number | undefined;
   private renderGen = 0;
+  // created on the first settle; null once workers turn out to be unavailable
+  private renderPool: RenderPool | null | undefined;
 
   private resizeObserver: ResizeObserver;
   private disposed = false;
@@ -425,6 +428,8 @@ export class ViewCore {
     this.onPalette = this.onUpdate = this.onSettled = null;
     this.resizeObserver.disconnect();
     clearTimeout(this.settleTimer);
+    this.renderPool?.dispose();
+    this.renderPool = null;
     // dispose() loses the GL context; detach first so the context-lost
     // handler doesn't fall back to a CPU render on this dead core
     const gl = this.glPreview;
@@ -444,6 +449,7 @@ export class ViewCore {
     if (this.glPreview) {
       // GPU frame now; full-precision CPU frame once edits stop coming
       this.renderGen++;
+      this.renderPool?.cancel();
       this.glPreview.draw(this.scene, this.lights, this._engine.glow());
       if (!this.glPreview.canvas.classList.contains('gl-visible')) this.glPreview.canvas.classList.add('gl-visible');
       clearTimeout(this.settleTimer);
@@ -465,12 +471,22 @@ export class ViewCore {
     }
     this.renderInProgress = true;
     const gen = this.renderGen;
-    this._engine.beginFrame();
     let done = true;
-    for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
-      this._engine.renderPass(this.imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
-      await new Promise(requestAnimationFrame);
-      if (gen !== this.renderGen || this.disposed) { done = false; break; } // superseded mid-settle
+    if (this.renderPool === undefined) this.renderPool = RenderPool.create();
+    const outcome = this.renderPool
+      ? await this.renderPool.render(this.canvas.width, this.canvas.height, this.scene, this.lights, this.imageData.data)
+      : 'failed';
+    if (outcome === 'failed') {
+      // no workers: the same frame, rendered here between animation frames
+      this.renderPool = null;
+      this._engine.beginFrame();
+      for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
+        this._engine.renderPass(this.imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
+        await new Promise(requestAnimationFrame);
+        if (gen !== this.renderGen || this.disposed) { done = false; break; } // superseded mid-settle
+      }
+    } else if (outcome === 'superseded' || gen !== this.renderGen || this.disposed) {
+      done = false;
     }
     if (done) {
       this._engine.refineEdges(this.imageData.data);

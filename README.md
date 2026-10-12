@@ -160,7 +160,11 @@ runs on this element.
 Drop the `controls` attribute for a render-only view. `renderer="software"`
 opts out of the WebGL2 preview at runtime; the interactive preview is f32 on
 the GPU, but the settled frame and every sampled color always come from the
-f64 CPU engine.
+f64 CPU engine. The component renders that settled frame in Web Workers, in
+row bands stitched back together, so it lands several times faster and the
+page stays responsive. Where workers are unavailable (or a Content Security
+Policy blocks blob workers) it renders on the main thread instead; the frame
+is bit-identical either way. `createEngine` itself never uses workers.
 
 ### Bloom
 

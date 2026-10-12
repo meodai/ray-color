@@ -183,3 +183,19 @@ test('glow() is null without bloom and a grid of GLOW_ROWS rows with it', () => 
   assert.equal(g.width, GLOW_ROWS * 2);
   assert.equal(g.data.length, g.width * g.height * 3);
 });
+
+test('row bands from separate engines stitch into exactly the renderPass() frame', () => {
+  const scene = { ...makeScene(), bloom: { strength: 1, threshold: 0.5 } };
+  const full = createEngine(W, H, scene, makeLights());
+  const a = new Uint8ClampedArray(W * H * 4);
+  full.beginFrame();
+  full.renderPass(a, 1);
+  const b = new Uint8ClampedArray(W * H * 4);
+  const cuts = [0, 1, 30, 31, 64, H];
+  for (let k = 0; k < cuts.length - 1; k++) {
+    const band = new Uint8ClampedArray((cuts[k + 1] - cuts[k]) * W * 4);
+    createEngine(W, H, structuredClone(scene), makeLights()).renderRows(band, cuts[k], cuts[k + 1]);
+    b.set(band, cuts[k] * W * 4);
+  }
+  assert.equal(sha1(b), sha1(a));
+});

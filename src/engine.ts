@@ -369,6 +369,12 @@ export interface Engine {
   beginFrame(): void;
   /** Render one progressive pass into an RGBA buffer (width*height*4). */
   renderPass(out: Uint8ClampedArray, scale: number, skipStride?: number): void;
+  /** Render rows y0 (inclusive) to y1 (exclusive) at full resolution into a
+   * band buffer (width*(y1-y0)*4), its first row being y0. Allocates no
+   * per-pixel buffers, so it suits engines that only render part of a frame,
+   * like one per worker. Bands from engines with the same size, scene and
+   * lights stitch into exactly the renderPass() frame. */
+  renderRows(out: Uint8ClampedArray, y0: number, y1: number): void;
   /** Anti-alias a finished full-res buffer: re-render only pixels that differ
    * strongly from a neighbor (geometric edges) with a 2x2 sub-pixel grid,
    * averaged in linear light. Returns the number of refined pixels. */
@@ -1151,6 +1157,51 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     }
   }
 
+  // No per-pixel buffers: an engine that only renders bands (one per worker)
+  // stays small. Rays are rounded to f32 the way the ray cache stores them,
+  // and every pixel takes renderPass()'s fresh-hit path, so bands stitch into
+  // the exact renderPass() frame.
+  function renderRows(out: Uint8ClampedArray, y0: number, y1: number) {
+    y0 = Math.max(0, Math.floor(y0));
+    y1 = Math.min(height, Math.floor(y1));
+    updateCamera();
+    const bloom = ensureGlow();
+    for (let y = y0; y < y1; y++) {
+      const py = -(2 * ((y + 0.5) / height) - 1) * cachedTanFov;
+      for (let x = 0; x < width; x++) {
+        const px = (2 * ((x + 0.5) / width) - 1) * cachedAspectTanFov;
+        const len = Math.sqrt(px * px + py * py + 1);
+        const dirX = Math.fround(px / len);
+        const dirY = Math.fround(py / len);
+        const dirZ = Math.fround(1 / len);
+        let color: RGB;
+        let onSphere = false, hx = 0, hy = 0, hz = 0;
+        const sphereHit = intersectSphere(0, 0, scene.cameraZ, dirX, dirY, dirZ, scene.sphereRadius);
+        if (sphereHit) {
+          onSphere = true;
+          hx = sphereHit.nx * scene.sphereRadius;
+          hy = sphereHit.ny * scene.sphereRadius;
+          hz = sphereHit.nz * scene.sphereRadius;
+          color = calculateLighting(hx, hy, hz, sphereHit.nx, sphereHit.ny, sphereHit.nz, sphereColor[0], sphereColor[1], sphereColor[2]);
+        } else {
+          const roomHit = intersectRoom(0, 0, scene.cameraZ, dirX, dirY, dirZ);
+          if (roomHit) {
+            color = shadeWall(roomHit.x, roomHit.y, roomHit.z, roomHit.nx, roomHit.ny, roomHit.nz, dirX, dirY, dirZ);
+          } else {
+            color = shadeScratch;
+            color.r = 0; color.g = 0; color.b = 0;
+          }
+        }
+        if (bloom) addGlow(color, onSphere ? sphereGlowAt(hx, hy, hz) : glowAt((x + 0.5) / width, (y + 0.5) / height));
+        const idx = ((y - y0) * width + x) * 4;
+        out[idx] = toSRGB8(color.r);
+        out[idx + 1] = toSRGB8(color.g);
+        out[idx + 2] = toSRGB8(color.b);
+        out[idx + 3] = 255;
+      }
+    }
+  }
+
   // Shade an arbitrary (fractional-pixel) primary ray — the sub-pixel path
   // used by refineEdges. No G-buffer: edge pixels are re-traced every time.
   function shadeSubRay(px: number, py: number): RGB {
@@ -1328,6 +1379,7 @@ function createEngineSized(width: number, height: number, scene: Scene, lights: 
     commit,
     beginFrame,
     renderPass,
+    renderRows,
     refineEdges,
     castRay,
     shade,
