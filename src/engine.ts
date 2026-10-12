@@ -217,14 +217,15 @@ export function rotateDirs(dirs: Float64Array[], deg: number, center?: ArrayLike
   return dirs;
 }
 
-/** N surface anchors along the geodesic from a to b (endpoints included).
+/** N surface anchors along the geodesic from a to b (endpoints included; a
+ * single sample sits at the spaced midpoint).
  * rotate swings the whole set about the geodesic midpoint — 180 reverses it. */
 export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count: number, opts?: Distribution | SampleOptions): Float64Array[] {
   const { spacing = distributions.linear, rotate = 0 } = sampleOpts(opts);
-  const n = Math.max(2, count);
+  const n = Math.max(0, Math.floor(count) || 0);
   const dirs: Float64Array[] = [];
   for (let k = 0; k < n; k++) {
-    dirs.push(slerp(a, b, spacing(k / (n - 1))));
+    dirs.push(slerp(a, b, spacing(n === 1 ? 0.5 : k / (n - 1))));
   }
   if (rotate) {
     const m = slerp(a, b, 0.5);
@@ -238,7 +239,7 @@ export function sampleLineDirs(a: ArrayLike<number>, b: ArrayLike<number>, count
  * rotate spins the whole set around the circle without moving it. */
 export function sampleCircleDirs(center: ArrayLike<number>, rho: number, count: number, opts?: Distribution | SampleOptions): Float64Array[] {
   const { spacing = distributions.linear, rotate = 0 } = sampleOpts(opts);
-  const n = Math.max(2, count);
+  const n = Math.max(0, Math.floor(count) || 0);
   const phase = rotate * Math.PI / 180;
   const dirs: Float64Array[] = [];
   for (let k = 0; k < n; k++) {
