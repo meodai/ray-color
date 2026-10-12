@@ -222,7 +222,8 @@ export class ViewCore {
         this.glPreview.canvas.setAttribute('aria-hidden', 'true');
         this.canvas.insertAdjacentElement('afterend', this.glPreview.canvas);
         this.glPreview.canvas.addEventListener('webglcontextlost', () => {
-          this.glPreview!.canvas.remove();
+          if (this.disposed || !this.glPreview) return;
+          this.glPreview.canvas.remove();
           this.glPreview = null;
           this.requestRender();
         });
@@ -412,7 +413,11 @@ export class ViewCore {
     this.onPalette = this.onUpdate = this.onSettled = null;
     this.resizeObserver.disconnect();
     clearTimeout(this.settleTimer);
-    this.glPreview?.dispose();
+    // dispose() loses the GL context; detach first so the context-lost
+    // handler doesn't fall back to a CPU render on this dead core
+    const gl = this.glPreview;
+    this.glPreview = null;
+    gl?.dispose();
     this.viewport.remove();
   }
 
@@ -423,6 +428,7 @@ export class ViewCore {
   }
 
   requestRender() {
+    if (this.disposed) return;
     if (this.glPreview) {
       // GPU frame now; full-precision CPU frame once edits stop coming
       this.renderGen++;
@@ -452,7 +458,7 @@ export class ViewCore {
     for (let pass = 0; pass < DEFAULT_PASS_SCALES.length; pass++) {
       this._engine.renderPass(this.imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
       await new Promise(requestAnimationFrame);
-      if (gen !== this.renderGen) { done = false; break; } // superseded mid-settle
+      if (gen !== this.renderGen || this.disposed) { done = false; break; } // superseded mid-settle
     }
     if (done) {
       this._engine.refineEdges(this.imageData.data);
@@ -491,6 +497,7 @@ export class ViewCore {
       this._engine.renderPass(this.imageData.data, DEFAULT_PASS_SCALES[pass], pass === 0 ? 0 : DEFAULT_PASS_SCALES[pass - 1]);
       this.ctx.putImageData(this.imageData, 0, 0);
       await new Promise(requestAnimationFrame);
+      if (this.disposed) { this.renderInProgress = false; return; }
     }
     // Settled (no follow-up render queued): anti-alias the geometric edges
     if (!this.pendingRender) {
